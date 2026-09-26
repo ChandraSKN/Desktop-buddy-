@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 import anthropic
 
-from .agent_tools import TOOLS, ToolBox
+from .agent_tools import TOOLS, ToolBox, short_key
 from .corrector import KEY_FILE
 from .corrector import _api_key as api_key
 
@@ -75,7 +75,7 @@ def context_block(events, now):
     nxt = upcoming(events, now, limit=3)
     if nxt:
         lines.append("Next meetings: " + "; ".join(
-            f"{e.start.astimezone().strftime('%H:%M')} {e.title} [key {e.key}]" for e in nxt))
+            f"{e.start.astimezone().strftime('%H:%M')} {e.title} [key {short_key(e)}]" for e in nxt))
     return lines
 
 

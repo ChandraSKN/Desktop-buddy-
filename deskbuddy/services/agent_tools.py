@@ -8,6 +8,7 @@ UI must do (opening a link) comes back as an action for the main thread to perfo
 Calendar text is untrusted (anyone can send you an invite), so join_meeting only opens a
 join link that came from your own calendar feed, by meeting key, never an arbitrary URL."""
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -56,6 +57,11 @@ TOOLS = [
 ]
 
 _TYPES = {"string": str, "integer": int}
+
+
+def short_key(event):
+    """Outlook meeting ids are ~150 characters; the model gets a stable 8-character one."""
+    return hashlib.sha1(event.key.encode()).hexdigest()[:8]
 
 
 class ToolInputError(ValueError):
@@ -107,14 +113,14 @@ class ToolBox:
             return ToolResult(json.dumps({"INVALID_INPUT": str(exc), "input": args}), is_error=True)
 
     def _event(self, key):
-        return next((e for e in self.get_events() if e.key == key), None)
+        return next((e for e in self.get_events() if short_key(e) == key.strip()), None)
 
     def _get_meetings(self, hours_ahead=24):
         now = self.now()
         items = [e for e in upcoming(self.get_events(), now, limit=20)
                  if e.start <= now + timedelta(hours=hours_ahead)]
         return ToolResult(json.dumps([
-            {"key": e.key, "title": e.title,
+            {"key": short_key(e), "title": e.title,
              "start": e.start.astimezone().strftime("%a %d %b %H:%M"), "end": local_time(e.end),
              "has_join_link": bool(e.url)} for e in items]) if items else "No meetings in that window.")
 

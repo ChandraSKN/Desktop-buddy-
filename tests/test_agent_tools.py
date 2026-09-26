@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from deskbuddy.services.agent_tools import TOOLS, ToolBox
+from deskbuddy.services.agent_tools import TOOLS, ToolBox, short_key
 from deskbuddy.services.memory import MemoryStore
 from deskbuddy.services.reminders import Event
 
@@ -26,12 +26,12 @@ def test_every_tool_has_a_handler_and_a_strict_schema(box):
 
 def test_get_meetings_respects_the_window(box):
     items = json.loads(box.run("get_meetings", {"hours_ahead": 2}).content)
-    assert [m["key"] for m in items] == ["standup"]
+    assert [m["key"] for m in items] == [short_key(STANDUP)]
     assert items[0]["has_join_link"] is True
 
 
 def test_reminder_after_a_meeting_fires_when_it_ends(box):
-    result = box.run("create_reminder", {"text": "Email Ravi", "after_meeting": "standup"})
+    result = box.run("create_reminder", {"text": "Email Ravi", "after_meeting": short_key(STANDUP)})
     assert not result.is_error
     assert box.memory.pending_reminders()[0].due_at == STANDUP.end
 
@@ -70,7 +70,13 @@ def test_remember_recall_forget(box):
 
 
 def test_join_meeting_only_opens_calendar_links(box):
-    assert box.run("join_meeting", {"key": "standup"}).open_url == STANDUP.url
-    assert box.run("join_meeting", {"key": "lunch"}).open_url is None       # no link
+    assert box.run("join_meeting", {"key": short_key(STANDUP)}).open_url == STANDUP.url
+    assert box.run("join_meeting", {"key": short_key(LUNCH)}).open_url is None       # no link
     bad = box.run("join_meeting", {"key": "https://evil.example"})
     assert bad.is_error and bad.open_url is None
+
+
+def test_meeting_keys_are_short_and_stable(box):
+    key = short_key(STANDUP)
+    assert len(key) == 8 and key == short_key(STANDUP)
+    assert box.run("join_meeting", {"key": STANDUP.key}).is_error      # the long id isn't accepted

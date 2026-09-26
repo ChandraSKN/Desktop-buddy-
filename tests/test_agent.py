@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace as NS
 
 from deskbuddy.services.agent import Agent
-from deskbuddy.services.agent_tools import ToolBox
+from deskbuddy.services.agent_tools import ToolBox, short_key
 from deskbuddy.services.memory import MemoryStore
 from deskbuddy.services.reminders import Event
 
@@ -63,7 +63,7 @@ def test_tool_loop_runs_the_tool_and_returns_the_final_answer():
     client = FakeClient(
         NS(stop_reason="tool_use", content=[text("Let me set that. "),
                                             tool("t1", "create_reminder",
-                                                 {"text": "Email Ravi", "after_meeting": "m1"})]),
+                                                 {"text": "Email Ravi", "after_meeting": short_key(MEETING)})]),
         NS(stop_reason="end_turn", content=[text("Done, I'll remind you after the design review.")]),
     )
     agent, store = make(client)
@@ -124,7 +124,7 @@ def test_truncated_tool_input_is_not_run():
 
 def test_join_meeting_action_reaches_the_ui():
     client = FakeClient(
-        NS(stop_reason="tool_use", content=[tool("t1", "join_meeting", {"key": "m1"})]),
+        NS(stop_reason="tool_use", content=[tool("t1", "join_meeting", {"key": short_key(MEETING)})]),
         NS(stop_reason="end_turn", content=[text("Opening it now.")]),
     )
     agent, _ = make(client)
