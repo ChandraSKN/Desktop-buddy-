@@ -33,6 +33,7 @@ from ..services.briefing import gather, write_brief
 from ..services.claude_hooks import describe as describe_claude
 from ..services.idle import IdleMonitor
 from ..services.launcher import Launcher
+from ..services.listener import CONVERSATION, is_goodbye
 from ..services.memory import MemoryStore
 from ..services.notifier import Notifier
 from ..services.reminders import (
@@ -108,6 +109,9 @@ class Buddy(QWidget):
         self.listener = ListenerThread()
         self.listener.wake.connect(self.on_wake)
         self.listener.heard.connect(self.on_heard)
+        self.listener.awaiting.connect(self.on_awaiting)
+        self.speaker.finished.connect(self._reply_spoken)
+        self.reply_pending = False           # a spoken answer is playing; a follow-up may come
         self.listener.status.connect(self._voice_status)
         self.brief = self.settings.value("meeting_brief", True, type=bool)
         self.briefed, self.brief_workers = set(), []
@@ -354,21 +358,41 @@ class Buddy(QWidget):
 
     def on_wake(self):
         self.stand_up()
+        self.reply_pending = False           # "Hey Buddy" already opens its own window
         self.speaker.stop()
         self.say("👂 Yes?", 8000)
 
     def on_heard(self, text, language="en"):
         self.stand_up()
+        if is_goodbye(text):                 # "thanks" / "that's all" ends the conversation
+            self.say("👍", 2000)
+            return
         self.say(f"🎤 “{text}”", 20000)
         if not self.chat.ask(text, spoken=True, language=language):
             self.voice_reply("Hang on, I'm still answering the last one.")
 
     def voice_reply(self, text):
-        """Show the reply in a bubble and, unless voice is off, say it."""
+        """Show the reply in a bubble and, unless voice is off, say it. Then listen for a
+        follow-up question for a few seconds, without needing "Hey Buddy" again."""
         self.say(text[:220] + ("…" if len(text) > 220 else ""), max(5000, 70 * len(text)))
-        if self.speak:
-            self.speaker.say(text)
+        if self.speak and self.speaker.say(text):
             self.listener.hold = True
+            self.reply_pending = True        # follow-up opens when he stops talking
+        else:
+            self.listener.follow_up()
+
+    def _reply_spoken(self):
+        if self.reply_pending:
+            self.reply_pending = False
+            self.listener.hold = self.minutes.recorder.recording
+            self.listener.follow_up()
+
+    def on_awaiting(self):
+        """Show that he's still listening, under the answer if it's still up."""
+        text = self.bubble.text if self.bubble.isVisible() else ""
+        if "👂" not in text:
+            text = (text + "\n\n" if text else "") + "👂 Anything else?"
+        self.say(text, max(self.bubble._hide.remainingTime(), int(CONVERSATION * 1000)))
 
     def push_to_talk(self):
         if VOICE and not self.listener.isRunning():

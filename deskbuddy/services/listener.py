@@ -9,6 +9,8 @@ until it's been checked.
    If it starts with the wake phrase, the command is transcribed properly with the
    multilingual model, either from the same breath ("Hey Buddy, what's next?") or
    from the next thing said within a few seconds ("Hey Buddy." … "What's next?").
+   After he answers, the next few seconds count as a follow-up question too, so a
+   conversation doesn't need "Hey Buddy" every time; "thanks" or silence ends it.
 
 Transcribers are passed in, so this logic is testable without audio or models."""
 
@@ -20,6 +22,7 @@ import numpy as np
 RATE = 16000
 FRAME = 480                       # 30 ms
 FOLLOW_UP = 8.0                   # seconds to say the command after a bare "Hey Buddy"
+CONVERSATION = 10.0               # seconds to ask a follow-up after he's answered
 
 _WAKE = re.compile(r"\b(hey|hi|hay|hei|a|ok|okay)[\s,.!]+(buddy|buddie|budy|bady|body|buddi|bodhi|birdie)\b")
 
@@ -53,6 +56,18 @@ def strip_wake(text):
     """The command part of 'Hey Buddy, what's my next meeting?'."""
     span = find_wake(text)
     return (text[span[1]:] if span else text).lstrip(" ,.!?").strip()
+
+
+_GOODBYE = re.compile(r"^((no|nope|nothing|stop|cancel|bye|goodbye|good bye|thats all|thats it|that is all|"
+                      r"ok|okay|alright|all right|cool|great|got it|perfect)( |$))*"
+                      r"((no )?thanks?( you)?|bye)?( buddy)?$")
+
+
+def is_goodbye(text):
+    """"Thanks", "that's all", "no": the end of a conversation, not a question."""
+    words = normalize(text.replace("'", "").replace("’", "")).replace(",", " ").replace(".", " ")
+    words = " ".join(words.replace("!", " ").split())
+    return bool(words) and bool(_GOODBYE.match(words))
 
 
 class Endpointer:
@@ -106,9 +121,11 @@ class WakeListener:
     def on_utterance(self, audio, now):
         """Returns None, ("wake",) or ("command", text)."""
         if now < self.awaiting_until:
-            self.awaiting_until = 0.0
             text = strip_wake(self.full(audio))
-            return ("command", text) if text else None
+            if not text:                  # a cough or a door: keep waiting for the question
+                return None
+            self.awaiting_until = 0.0
+            return ("command", text)
         heard = self.quick(audio)
         span = find_wake(heard)
         if span is None:

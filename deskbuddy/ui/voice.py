@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 from PyQt6.QtCore import QObject, QProcess, QThread, pyqtSignal
 
-from ..services.listener import FRAME, RATE, Endpointer, WakeListener
+from ..services.listener import CONVERSATION, FRAME, RATE, Endpointer, WakeListener
 from ..services.recorder import ignore_debug_signal, other_apps_using_mic
 from ..services.speech import MOUTH_FPS, TELUGU_VOICE, Voice, clean_for_speech
 from ..services.telugu import has_telugu
@@ -23,6 +23,7 @@ CALL_CHECK_EVERY = 5.0
 class ListenerThread(QThread):
     wake = pyqtSignal()
     heard = pyqtSignal(str, str)       # command text (English), language it was spoken in
+    awaiting = pyqtSignal()            # listening for a follow-up question, no "Hey Buddy" needed
     status = pyqtSignal(str)           # "loading", "listening", "paused: …", "error: …"
 
     def __init__(self):
@@ -31,12 +32,17 @@ class ListenerThread(QThread):
         self.hold = False              # set while Buddy speaks or records minutes
         self._stop = False
         self._push_to_talk = False
+        self._follow_up = False
         self.language = "en"           # of the last command
         self.proc = None
 
     # called from the UI thread
     def push_to_talk(self):
         self._push_to_talk = True
+
+    def follow_up(self):
+        """Buddy has answered: take the next thing said (once he's quiet) as a question."""
+        self._follow_up = True
 
     def stop(self):
         self._stop = True
@@ -117,6 +123,10 @@ class ListenerThread(QThread):
             if self._push_to_talk:
                 self._push_to_talk = False
                 wake.expect_command(now)
+            if self._follow_up and not self.hold and self.enabled:
+                self._follow_up = False
+                wake.expect_command(now, CONVERSATION)
+                self.awaiting.emit()
             reason = ("off" if not self.enabled else "busy" if self.hold
                       else "on a call" if in_call and now >= wake.awaiting_until else None)
             state = f"paused: {reason}" if reason else "listening"

@@ -1,7 +1,16 @@
 import numpy as np
 import pytest
 
-from deskbuddy.services.listener import FRAME, RATE, Endpointer, WakeListener, find_wake, strip_wake
+from deskbuddy.services.listener import (
+    CONVERSATION,
+    FRAME,
+    RATE,
+    Endpointer,
+    WakeListener,
+    find_wake,
+    is_goodbye,
+    strip_wake,
+)
 from deskbuddy.services.speech import Voice, clean_for_speech, mouth_levels
 
 
@@ -94,3 +103,29 @@ def test_piper_speaks_to_a_wav(tmp_path):
     levels, seconds = Voice().synthesize("Your next meeting is at three.", tmp_path / "x.wav")
     assert 1.0 < seconds < 5.0 and (tmp_path / "x.wav").stat().st_size > 20000
     assert len(levels) == pytest.approx(seconds * 25, abs=1) and max(levels) >= 2
+
+
+def test_follow_up_after_an_answer_needs_no_wake_phrase():
+    listener = WakeListener(quick=lambda a: pytest.fail("no wake check"), full=lambda a: "and tomorrow?")
+    listener.expect_command(now=50, seconds=CONVERSATION)
+    assert listener.on_utterance(None, now=55) == ("command", "and tomorrow?")
+
+
+def test_a_cough_during_the_follow_up_window_keeps_it_open():
+    said = iter(["", "what about friday"])
+    listener = WakeListener(quick=lambda a: pytest.fail("no wake check"), full=lambda a: next(said))
+    listener.expect_command(now=0, seconds=CONVERSATION)
+    assert listener.on_utterance(None, now=2) is None
+    assert listener.on_utterance(None, now=4) == ("command", "what about friday")
+
+
+@pytest.mark.parametrize("text", ["Thanks.", "Thank you, buddy!", "That's all.", "That’s it, thanks",
+                                  "No.", "Okay, bye", "no thanks"])
+def test_thanks_ends_the_conversation(text):
+    assert is_goodbye(text)
+
+
+@pytest.mark.parametrize("text", ["", "no, what about friday", "stop the timer", "okay what about monday",
+                                  "thanks, and open firefox"])
+def test_questions_are_not_goodbyes(text):
+    assert not is_goodbye(text)
