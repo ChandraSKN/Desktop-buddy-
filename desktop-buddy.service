@@ -1,0 +1,18 @@
+[Unit]
+Description=Desktop Buddy (desktop companion, text fixer, meeting reminders)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tst-017-lenovo/Documents/chandra/desktop-buddy
+ExecStart=/home/tst-017-lenovo/Documents/chandra/desktop-buddy/.venv/bin/python /home/tst-017-lenovo/Documents/chandra/desktop-buddy/buddy.py
+Environment=QT_QPA_PLATFORM=xcb
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Come back if it crashes (or the display wasn't ready yet at login);
+# choosing Quit from Buddy's menu exits cleanly and is respected.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
