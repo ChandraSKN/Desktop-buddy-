@@ -37,3 +37,11 @@ AWAY_AFTER = _seconds("BUDDY_AWAY_AFTER", 5 * 60)
 # the assistant's long-term memory (facts + reminders it set)
 MEMORY_DB = os.environ.get("BUDDY_MEMORY_DB",
                            str(Path.home() / ".local" / "share" / "desktop-buddy" / "memory.db"))
+
+# minutes of meeting
+RECORDINGS_DIR = os.environ.get("BUDDY_RECORDINGS_DIR",
+                                str(Path.home() / ".local" / "share" / "desktop-buddy" / "recordings"))
+MINUTES_DIR = os.environ.get("BUDDY_MINUTES_DIR", str(Path.home() / "Documents" / "Meeting Minutes"))
+STOP_AFTER_END = 10 * 60        # still recording this long after the meeting's end: stop
+MAX_RECORDING = 4 * 60 * 60     # hard limit, in case the end is unknown
+MIC_CHECK_EVERY = 20            # seconds between "is another app using the mic?" checks

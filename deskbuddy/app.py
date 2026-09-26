@@ -19,7 +19,9 @@ def describe(buddy):
             f"paused={buddy.paused} hovered={buddy.hovered} frozen={buddy.frozen()} "
             f"busy={buddy.busy} card={buddy.card.isVisible()} "
             f"since_click={time.monotonic() - buddy.last_click:.0f}s "
-            f"you_idle={buddy.idle.idle_seconds:.0f}s away={buddy.idle.tracker.away}")
+            f"you_idle={buddy.idle.idle_seconds:.0f}s away={buddy.idle.tracker.away} "
+            f"minutes={buddy.minutes.state if buddy.minutes.isVisible() else None} "
+            f"recording={buddy.minutes.recorder.recording}")
 
 
 def main():

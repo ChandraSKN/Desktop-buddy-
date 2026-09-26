@@ -95,8 +95,10 @@ class MeetingCard(QWidget):
             after(self, 1500, lambda: self.copy.setText("Copy link"))
 
     def open_link(self):
-        if self.event:
-            QDesktopServices.openUrl(QUrl(self.event.url or self.buddy.outlook_url()))
+        if self.event and self.event.url:
+            self.buddy.join_meeting(self.event)
+        elif self.event:
+            QDesktopServices.openUrl(QUrl(self.buddy.outlook_url()))
             self.buddy.acknowledge(self.event.key)
 
     def dismiss(self):

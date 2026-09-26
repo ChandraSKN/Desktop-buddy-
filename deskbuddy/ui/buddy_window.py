@@ -47,6 +47,7 @@ from .assistant_panel import AssistantPanel
 from .bubble import Bubble
 from .corrector_panel import CorrectorPanel
 from .meeting_card import MeetingCard
+from .minutes_bar import MinutesBar
 from .timers import after
 
 
@@ -92,6 +93,8 @@ class Buddy(QWidget):
         self.memory = MemoryStore(MEMORY_DB)
         self.fixer = CorrectorPanel(self)
         self.chat = AssistantPanel(self, self.make_agent)
+        self.minutes = MinutesBar(self, self.memory)
+        after(self, 3000, self.minutes.resume_pending)
         self.bubble = Bubble()
         self.card = MeetingCard(self)
         self.notifier = Notifier(self)
@@ -203,6 +206,7 @@ class Buddy(QWidget):
 
     # ---- reminders ------------------------------------------------------------
     def check_reminders(self):
+        self.minutes.tick()
         here = not self.idle.tracker.away       # no break reminders for an empty desk
         for reminder in self.schedule.due(datetime.now(UTC), self.events,
                                           self.wellness and here):
@@ -250,12 +254,33 @@ class Buddy(QWidget):
 
     def notification_clicked(self, key, action):
         event = next((e for e in self.events + [self.card.event] if e and e.key == key), None)
+        if action == "open-minutes":
+            self.minutes.open_result()
         if action == "join" and event and event.url:
-            QDesktopServices.openUrl(QUrl(event.url))
+            self.join_meeting(event)
         elif action == "outlook":
             QDesktopServices.openUrl(QUrl(self.outlook_url()))
         if action in ("join", "outlook", "dismiss"):
             self.acknowledge(key)
+
+    def join_meeting(self, event):
+        """Open the meeting's link, stop reminding about it, and offer to take minutes."""
+        QDesktopServices.openUrl(QUrl(event.url))
+        self.acknowledge(event.key)
+        self.minutes.offer(event)
+
+    def open_meeting_link(self, url):
+        """The assistant joined a meeting: same as clicking Join."""
+        event = next((e for e in self.events if e.url == url), None)
+        if event:
+            self.join_meeting(event)
+        else:
+            QDesktopServices.openUrl(QUrl(url))
+
+    def stack_top(self):
+        """Top edge of whatever floats above Buddy (card, minutes bar), for the bubble."""
+        tops = [w.y() for w in (self.card, self.minutes) if w.isVisible()]
+        return min(tops) if tops else self.y() + 10
 
     def acknowledge(self, key):
         """You've seen this meeting: stop reminding, remove its notification and card."""
@@ -401,6 +426,7 @@ class Buddy(QWidget):
         self.move(int(self.fx) - self.pad, int(self.fy))
         self.bubble.follow(self)
         self.card.follow(self)
+        self.minutes.follow(self)
         self.update()
 
     # ---- painting -------------------------------------------------------------
@@ -506,8 +532,14 @@ class Buddy(QWidget):
             label = f"{day}{local_time(ev.start)}  {ev.title[:48]}" + \
                 ("   ▶ Join" if ev.url else "   (no link: open in Outlook)")
             action = meetings.addAction(label)
-            link = ev.url or self.outlook_url()
-            action.triggered.connect(lambda _=False, u=link: QDesktopServices.openUrl(QUrl(u)))
+            if ev.url:
+                action.triggered.connect(lambda _=False, e=ev: self.join_meeting(e))
+            else:
+                action.triggered.connect(lambda _=False: QDesktopServices.openUrl(QUrl(self.outlook_url())))
+        if self.minutes.recorder.recording:
+            menu.addAction("⏹  Stop minutes", self.minutes.stop)
+        else:
+            menu.addAction("📝  Take minutes now", self.start_minutes_now)
         menu.addAction("Preview meeting reminder", self.preview_meeting)
         menu.addAction("Connect Outlook calendar…", self.configure_outlook)
         menu.addAction("Sync calendar now", self.sync_calendar)
@@ -517,12 +549,18 @@ class Buddy(QWidget):
         menu.addAction("Quit", self.quit_safely)
         menu.exec(e.globalPos())
 
+    def start_minutes_now(self):
+        now = datetime.now(UTC)
+        live = next((e for e in self.events if e.start - timedelta(minutes=5) <= now <= e.end), None)
+        self.minutes.start(live, None if live else "Meeting")
+
     def quit_safely(self):
         if ((self.calendar_worker and self.calendar_worker.isRunning()) or
                 any(p.worker and p.worker.isRunning() for p in (self.fixer, self.chat))):
             self.say("Finishing the current request before closing…", 3000)
             after(self, 500, self.quit_safely)
             return
+        self.minutes.shutdown()         # finishes the audio; minutes resume at the next start
         QApplication.quit()
 
     def toggle_pause(self):

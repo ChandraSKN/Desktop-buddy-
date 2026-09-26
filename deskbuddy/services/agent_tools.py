@@ -1,9 +1,9 @@
 """The tools Buddy's assistant can use, and their handlers.
 
-Deliberately small and local: read your meetings, set/list/cancel reminders, remember/
-recall/forget facts, and join a meeting. No email, no files, no shell. Handlers validate
-their input themselves (tool inputs stream eagerly, so the API doesn't), and anything the
-UI must do (opening a link) comes back as an action for the main thread to perform.
+Deliberately small and local: read your meetings and their minutes, set/list/cancel
+reminders, remember/recall/forget facts, and join a meeting. No email, no files, no shell.
+Handlers validate their input themselves (tool inputs stream eagerly, so the API doesn't),
+and anything the UI must do (opening a link) comes back as an action for the main thread.
 
 Calendar text is untrusted (anyone can send you an invite), so join_meeting only opens a
 join link that came from your own calendar feed, by meeting key, never an arbitrary URL."""
@@ -52,6 +52,10 @@ TOOLS = [
     _tool("recall", "Search saved facts by keywords.",
           {"query": {"type": "string"}}, ["query"]),
     _tool("forget", "Delete a saved fact by id.", {"id": {"type": "integer"}}, ["id"]),
+    _tool("search_minutes",
+          "Search the minutes of meetings Buddy recorded (summary, action items, decisions). "
+          "With no good keyword match it returns the most recent minutes.",
+          {"query": {"type": "string", "description": "Meeting name, person or topic."}}, ["query"]),
     _tool("join_meeting", "Open a meeting's join link (Teams, Meet, Zoom…) in the browser.",
           {"key": {"type": "string", "description": "Meeting key from get_meetings."}}, ["key"]),
 ]
@@ -169,6 +173,14 @@ class ToolBox:
     def _forget(self, id):
         ok = self.memory.forget(id)
         return ToolResult("Forgotten." if ok else f"No memory {id}.", is_error=not ok)
+
+    def _search_minutes(self, query):
+        found = self.memory.search_minutes(query)
+        if not found:
+            return ToolResult("No minutes recorded yet.")
+        return ToolResult(json.dumps([
+            {"title": m.title, "held": m.held_at.astimezone().strftime("%a %d %b %Y %H:%M"),
+             "file": m.path, "minutes": m.body[:4000]} for m in found], ensure_ascii=False))
 
     def _join_meeting(self, key):
         event = self._event(key)

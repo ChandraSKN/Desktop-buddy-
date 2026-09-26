@@ -2,8 +2,8 @@
 
 import html
 
-from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QDesktopServices, QGuiApplication, QTextCursor
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QAction, QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
 from ..services import agent as agent_mod
@@ -114,7 +114,7 @@ class AssistantPanel(QWidget):
         self.status.setText("Thinking…")
         self.worker = AgentWorker(self.agent, text)
         self.worker.text.connect(self.on_text)
-        self.worker.action.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
+        self.worker.action.connect(self.buddy.open_meeting_link)
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
         self.worker.start()

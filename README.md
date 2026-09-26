@@ -2,8 +2,8 @@
 
 A small, always-on-top animated 3D companion for Linux: an **AI assistant** (Claude, with
 tools and long-term memory) that knows your Outlook meetings, sets reminders and remembers
-what you tell it, plus meeting reminders as real desktop notifications, wellness nudges,
-and a text fixer.
+what you tell it, **minutes of meeting** for the calls you join, meeting reminders as real
+desktop notifications, wellness nudges, and a text fixer.
 
 ## Start
 
@@ -139,6 +139,39 @@ several tools in one answer. Change `MODEL` in `deskbuddy/services/agent.py` to 
 for quality. If the model declines a
 request, the API retries it on another model automatically (`fallbacks: "default"`).
 
+## Minutes of meeting
+
+When you join a meeting through Buddy (the card's or notification's **Join**, the meetings
+menu, or asking the assistant), he asks **"📝 Take minutes for …?"**. He also asks if a
+calendar meeting is on and another app (Teams, your browser…) starts using the microphone,
+i.e. you joined some other way. Or right-click → **Take minutes now**. Recording only
+starts on a click; a red **● Recording** bar shows the whole time. *Tell the other people
+you're recording.*
+
+1. **Record:** PipeWire's `pw-record` captures two tracks: your microphone ("You") and
+   what plays through your speakers or headset ("Others"). It stops when you press
+   **Stop**, 10 minutes after the meeting's scheduled end, or after 4 hours.
+2. **Transcribe, on this computer:** faster-whisper's multilingual `small` model
+   (~460 MB, CPU, low priority, 4 threads) handles English mixed with Telugu or Hindi.
+   A 1-hour meeting takes roughly 15 minutes in the background. When your mic also picks
+   up the speakers (no headset), those echoed lines are dropped, and lines that fail
+   Whisper's quality limits (hallucinated repetition, silence) are removed.
+3. **Write:** Claude turns the transcript into structured minutes: summary, action items
+   (owner, due date), decisions, discussion, open questions. It translates non-English
+   parts, fixes obvious speech-to-text slips, and doesn't invent owners or dates.
+4. **Save:** `~/Documents/Meeting Minutes/<date time title>.md` with the transcript folded
+   at the end. You get a notification with **Open**, and the minutes are searchable from
+   the chat (*"What did we decide in the Uday meeting?"*).
+
+**Privacy:** the audio never leaves your computer and is deleted once the minutes are
+written. Only the transcript text goes to Claude. Recordings are kept under
+`~/.local/share/desktop-buddy/recordings/` (owner-only) until then. If Buddy quits
+mid-way, he finishes the minutes at the next start.
+
+**Limits:** "Others" is one mixed track, so individual people are named only when the
+conversation makes it clear who's speaking. Your default mic and speakers when recording
+starts are used; switching devices mid-call isn't followed.
+
 ## Outlook meeting reminders
 
 In Outlook on the web, open **Settings → Calendar → Shared calendars → Publish
@@ -225,6 +258,9 @@ flowchart LR
         I[idle<br/>GNOME idle monitor]
         C[corrector<br/>Claude / LanguageTool]
         AG[agent<br/>Claude tool loop]
+        REC[recorder<br/>pw-record, 2 tracks]
+        TR[transcribe<br/>faster-whisper, subprocess]
+        MIN[minutes<br/>Claude structured output]
         T[agent_tools<br/>8 validated tools]
         MEM[(memory<br/>SQLite + FTS5)]
     end
@@ -235,6 +271,8 @@ flowchart LR
     AP --> AG --> T
     T --> MEM & R
     W --> MEM
+    W --> MB[MinutesBar] --> REC & TR & MIN
+    MIN --> MEM
     BL[(blender/*.py<br/>headless renders)] -. frames + manifest .-> M3
 ```
 
@@ -263,9 +301,10 @@ deskbuddy/
   config.py               tunables; timings overridable by BUDDY_* env vars
   character/              model3d.py (drawing), chair.py (sit/stand sequence)
   services/               reminders, notifier, idle, corrector,
-                          agent, agent_tools, memory (no widgets)
-  ui/                     buddy_window, assistant_panel, bubble, meeting_card,
-                          corrector_panel, styles
+                          agent, agent_tools, memory, recorder, transcribe,
+                          minutes (no widgets)
+  ui/                     buddy_window, assistant_panel, minutes_bar, bubble,
+                          meeting_card, corrector_panel, styles
 blender/                  model build + render + pack scripts, buddy_model.blend
 tests/                    pytest; test_window.py drives the real window off-screen
 ```
@@ -273,7 +312,7 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 56 tests, ~7 s, no display or network
+.venv/bin/pytest                                # 75 tests, ~7 s, no display or network
 systemctl --user kill -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```
@@ -286,6 +325,9 @@ extraction, URL validation, the chair sequence (including reversing midway), awa
 detection and breaks, memory search/forget/reminders, every tool's input validation, the
 agent loop against a fake Claude (tool round-trips, request shape, cache-stable prompts,
 refusal and truncation handling), and the real window: drawing, sitting and standing, the
-stale-hover fix, the chat with and without a key, and assistant reminders firing.
+stale-hover fix, the chat with and without a key, and assistant reminders firing. Minutes:
+echo removal, hallucination filtering, rendering, search, and the whole record → minutes
+flow in the window (offer on join, offer when another app takes the mic, auto-stop,
+resuming unfinished recordings, too-little-speech).
 
 Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.

@@ -35,7 +35,7 @@ class Bubble(QWidget):
             screen = QGuiApplication.primaryScreen().availableGeometry()
             x = min(screen.right() - self.width() - 8,
                     max(screen.left() + 8, buddy.char_x() - self.width() // 2))
-            top = buddy.card.y() if buddy.card.isVisible() else buddy.y() + 10
+            top = buddy.stack_top()
             self.move(x, max(screen.top() + 8, top - self.height()))
             self._tail_x = buddy.char_x() - x
 

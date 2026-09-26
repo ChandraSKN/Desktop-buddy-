@@ -28,6 +28,19 @@ END;
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
+CREATE TABLE IF NOT EXISTS minutes (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    held_at TEXT NOT NULL,         -- UTC, ISO 8601
+    path TEXT NOT NULL,
+    body TEXT NOT NULL             -- the minutes without the transcript
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS minutes_fts USING fts5(
+    title, body, content='minutes', content_rowid='id', tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS minutes_ai AFTER INSERT ON minutes BEGIN
+    INSERT INTO minutes_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
+END;
 CREATE TABLE IF NOT EXISTS reminders (
     id INTEGER PRIMARY KEY,
     text TEXT NOT NULL,
@@ -43,6 +56,15 @@ class Memory:
     id: int
     text: str
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class MeetingMinutes:
+    id: int
+    title: str
+    held_at: datetime
+    path: str
+    body: str
 
 
 @dataclass(frozen=True)
@@ -101,6 +123,26 @@ class MemoryStore:
     def forget(self, memory_id):
         with self.db:
             return self.db.execute("DELETE FROM memories WHERE id = ?", (memory_id,)).rowcount > 0
+
+    # ---- minutes of meetings
+    def add_minutes(self, title, held_at, path, body):
+        with self.db:
+            return self.db.execute("INSERT INTO minutes(title, held_at, path, body) VALUES (?, ?, ?, ?)",
+                                   (title, _iso(held_at), str(path), body)).lastrowid
+
+    def search_minutes(self, query, limit=3):
+        q = _fts_query(query)
+        if q:
+            rows = self.db.execute(
+                "SELECT m.id, m.title, m.held_at, m.path, m.body FROM minutes_fts f "
+                "JOIN minutes m ON m.id = f.rowid WHERE minutes_fts MATCH ? "
+                "ORDER BY bm25(minutes_fts) LIMIT ?", (q, limit)).fetchall()
+        else:
+            rows = []
+        if not rows:            # "what happened in my last meeting?" -> the most recent ones
+            rows = self.db.execute("SELECT id, title, held_at, path, body FROM minutes "
+                                   "ORDER BY held_at DESC LIMIT ?", (limit,)).fetchall()
+        return [MeetingMinutes(i, t, _dt(h), p, b) for i, t, h, p, b in rows]
 
     # ---- reminders
     def add_reminder(self, text, due_at, now=None):
