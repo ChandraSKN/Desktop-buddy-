@@ -1,7 +1,7 @@
 # Desktop Buddy
 
-A small, always-on-top animated 3D companion for Linux: an **AI assistant** (Claude, with
-tools and long-term memory) that knows your Outlook meetings, sets reminders and remembers
+A small, always-on-top animated 3D companion for Linux: an **AI assistant you can talk
+to** ("Hey Buddy", with spoken replies and lip-sync; Claude with tools and long-term memory) that knows your Outlook meetings, sets reminders and remembers
 what you tell it, **minutes of meeting** for the calls you join, meeting reminders as real
 desktop notifications, wellness nudges, and a text fixer.
 
@@ -139,6 +139,32 @@ several tools in one answer. Change `MODEL` in `deskbuddy/services/agent.py` to 
 for quality. If the model declines a
 request, the API retries it on another model automatically (`fallbacks: "default"`).
 
+## Voice: "Hey Buddy"
+
+Say **"Hey Buddy, what's my next meeting?"** (or "Hey Buddy." … wait for **👂 Yes?** …
+then ask). He answers out loud, his mouth moving with the words, and shows the reply in a
+bubble; the exchange also appears in the chat. Click him to interrupt. Push-to-talk: the
+🎤 button in the chat, or right-click → **Talk to Buddy**. Right-click toggles **Listen for
+"Hey Buddy"** and **Speak replies**.
+
+Everything runs on this computer; nothing is sent anywhere until you've said the wake
+phrase, and then only the transcribed words go to Claude.
+
+- **Hearing:** `pw-record` streams the mic; an adaptive energy gate (it follows the room's
+  noise level) cuts it into utterances; Silero VAD confirms there's speech; Whisper
+  `tiny.en` checks for the wake phrase (~0.3 s); the command is transcribed with
+  multilingual Whisper `base` (~0.9 s; `small` took ~2.2 s here). Wake matching tolerates
+  "Heybuddy", "OK Buddy", "Hey body", but "I told my buddy" doesn't count.
+- **Speaking:** Piper (`en_US-ryan-medium`, ~0.2 s to render a sentence) played with
+  `pw-play`. The voice doesn't report phoneme timings, so the mouth follows loudness: four
+  openings rendered in Blender (`blender/talk_frames.py`, with a strip of upper teeth),
+  picked 25 times a second.
+- **Not listening** while he's speaking (he'd hear himself), while recording minutes, or
+  while another app is using the mic (you're on a call). If the mic stream drops (headset
+  off), it reconnects by itself.
+- **Cost:** ~550 MB of memory with the speech models loaded, ~5% of one core while idle.
+  Turning listening off frees the CPU.
+
 ## Minutes of meeting
 
 When you join a meeting through Buddy (the card's or notification's **Join**, the meetings
@@ -248,6 +274,7 @@ flowchart LR
         W --> MC[MeetingCard]
         W --> CP[CorrectorPanel]
         W --> AP[AssistantPanel<br/>chat, streaming]
+        W --> V[voice<br/>ListenerThread, Speaker]
     end
     subgraph character[deskbuddy/character]
         CH[chair.ChairScene<br/>sit/stand timing] --> M3[model3d<br/>sprite playback]
@@ -261,6 +288,8 @@ flowchart LR
         REC[recorder<br/>pw-record, 2 tracks]
         TR[transcribe<br/>faster-whisper, subprocess]
         MIN[minutes<br/>Claude structured output]
+        L[listener<br/>endpointing, wake phrase]
+        SP[speech<br/>Piper, mouth levels]
         T[agent_tools<br/>8 validated tools]
         MEM[(memory<br/>SQLite + FTS5)]
     end
@@ -273,6 +302,8 @@ flowchart LR
     W --> MEM
     W --> MB[MinutesBar] --> REC & TR & MIN
     MIN --> MEM
+    V --> L & SP
+    V -. heard .-> AP
     BL[(blender/*.py<br/>headless renders)] -. frames + manifest .-> M3
 ```
 
@@ -302,8 +333,8 @@ deskbuddy/
   character/              model3d.py (drawing), chair.py (sit/stand sequence)
   services/               reminders, notifier, idle, corrector,
                           agent, agent_tools, memory, recorder, transcribe,
-                          minutes (no widgets)
-  ui/                     buddy_window, assistant_panel, minutes_bar, bubble,
+                          minutes, listener, speech (no widgets)
+  ui/                     buddy_window, assistant_panel, minutes_bar, voice, bubble,
                           meeting_card, corrector_panel, styles
 blender/                  model build + render + pack scripts, buddy_model.blend
 tests/                    pytest; test_window.py drives the real window off-screen
@@ -312,8 +343,8 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 75 tests, ~7 s, no display or network
-systemctl --user kill -s USR1 desktop-buddy     # print the running buddy's state…
+.venv/bin/pytest                                # 97 tests, ~9 s, no display, mic or network
+systemctl --user kill --kill-whom=main -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```
 
@@ -328,6 +359,10 @@ refusal and truncation handling), and the real window: drawing, sitting and stan
 stale-hover fix, the chat with and without a key, and assistant reminders firing. Minutes:
 echo removal, hallucination filtering, rendering, search, and the whole record → minutes
 flow in the window (offer on join, offer when another app takes the mic, auto-stop,
-resuming unfinished recordings, too-little-speech).
+resuming unfinished recordings, too-little-speech). Voice: wake-phrase variants and
+non-wake speech, endpointing on synthetic audio (a noisy room, clicks), wake-then-command
+timing, push-to-talk, speech text cleanup, mouth levels, real Piper output when installed,
+and in the window: heard speech → assistant → spoken reply, standing still with the
+talking mouth, and turning speech off.
 
 Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.

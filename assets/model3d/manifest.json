@@ -108,6 +108,12 @@
     "file": "sit_2.png",
     "frames": 14
    }
+  },
+  "talk": {
+   "2": {
+    "file": "talk_2.png",
+    "frames": 4
+   }
   }
  },
  "frame_size": [

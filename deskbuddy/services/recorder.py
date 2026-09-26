@@ -10,6 +10,7 @@ Each recording is a folder under RECORDINGS with meta.json; the processing pipel
 restart."""
 
 import json
+import os
 import signal
 import subprocess
 from datetime import UTC, datetime
@@ -19,7 +20,22 @@ TRACKS = {
     "mic.wav": ["--target", "@DEFAULT_AUDIO_SOURCE@"],
     "others.wav": ["-P", "{ stream.capture.sink=true }", "--target", "@DEFAULT_AUDIO_SINK@"],
 }
-OUR_BINARIES = {"pw-record"}
+
+
+def _started_by_us(pid):
+    """True if pid is a child of this process (our own recorder or listener). pw-record is
+    really pw-cat, so matching on the program name isn't reliable."""
+    try:
+        with open(f"/proc/{int(pid)}/stat") as f:
+            return int(f.read().rsplit(")", 1)[1].split()[1]) == os.getpid()
+    except (OSError, ValueError, IndexError):
+        return False
+
+
+def ignore_debug_signal():
+    """For child processes: `systemctl --user kill -s USR1 desktop-buddy` signals every process
+    in the service, and pw-record would quit on it."""
+    signal.signal(signal.SIGUSR1, signal.SIG_IGN)
 
 
 def folder_name(start, title):
@@ -54,7 +70,7 @@ class Recorder:
             self.procs.append(subprocess.Popen(
                 ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", *args,
                  str(self.folder / name)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, preexec_fn=ignore_debug_signal))
         return self.folder
 
     def failed(self):
@@ -89,6 +105,9 @@ def other_apps_using_mic():
         objects = json.loads(out)
     except (OSError, subprocess.SubprocessError, ValueError):
         return []
+    # a stream's process id is on the PipeWire client that owns it
+    client_pid = {obj.get("id"): ((obj.get("info") or {}).get("props") or {}).get("application.process.id")
+                  for obj in objects if obj.get("type") == "PipeWire:Interface:Client"}
     apps = []
     for obj in objects:
         props = (obj.get("info") or {}).get("props") or {}
@@ -96,8 +115,8 @@ def other_apps_using_mic():
             continue
         if props.get("stream.capture.sink") in (True, "true"):
             continue                                  # recording speakers, not the mic
-        binary = props.get("application.process.binary", "")
-        if binary in OUR_BINARIES:
-            continue
-        apps.append(props.get("application.name") or binary or "an app")
+        pid = props.get("application.process.id") or client_pid.get(props.get("client.id"))
+        if pid is not None and _started_by_us(pid):
+            continue                                  # our own recorder / listener
+        apps.append(props.get("application.name") or props.get("application.process.binary") or "an app")
     return apps

@@ -94,9 +94,13 @@ class Agent:
             self._client = anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
         return self._client
 
-    def _user_turn(self, text):
+    def _user_turn(self, text, spoken=False):
         now = self.now()
         lines = context_block(self.toolbox.get_events(), now)
+        if spoken:
+            lines.append("The user said this out loud and your reply will be spoken: answer in one "
+                         "or two short sentences, no lists, no links. The words came from speech "
+                         "recognition, so allow for misheard words.")
         facts = {m.id: m for m in self.toolbox.memory.recall(text, limit=5)}
         for m in self.toolbox.memory.recent(limit=3):
             facts.setdefault(m.id, m)
@@ -125,9 +129,9 @@ class Agent:
                     on_text(event.text)
             return stream.get_final_message()
 
-    def send(self, text, on_text=lambda s: None, on_action=lambda url: None):
+    def send(self, text, on_text=lambda s: None, on_action=lambda url: None, spoken=False):
         """Run one user turn; returns the full reply text."""
-        self.messages.append(self._user_turn(text))
+        self.messages.append(self._user_turn(text, spoken))
         reply = []
 
         def emit(chunk):

@@ -102,14 +102,22 @@ def _image(name):
     return QImage(str(ASSETS / name)).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
 
 
-def draw_model(p, width, height, phase, walking, breath, yaw, wave_t=None, cx=None):
+def can_talk():
+    return "talk" in _manifest()["anims"]
+
+
+def draw_model(p, width, height, phase, walking, breath, yaw, wave_t=None, cx=None, mouth=None):
     """Draw the character bottom-centred at cx (default: the middle of a width x height area).
     phase: walk cycle angle; yaw: turn in radians (+ faces right); wave_t: seconds into a
-    wave, or None."""
+    wave, or None; mouth: 0-3 opening while speaking (idle angle only), or None."""
     m = _manifest()
     cx = width / 2 if cx is None else cx
     fw, fh = m["frame_size"]
-    if wave_t is not None and "wave" in m["anims"]:
+    if mouth is not None and not walking and "talk" in m["anims"]:
+        yi = int(next(iter(m["anims"]["talk"])))
+        strip, count = _strip("talk", yi)
+        frame = max(0, min(count - 1, mouth))
+    elif wave_t is not None and "wave" in m["anims"]:
         anim = "wave"
         yi = _nearest_yaw(yaw, [int(k) for k in m["anims"]["wave"]])
         strip, count = _strip(anim, yi)

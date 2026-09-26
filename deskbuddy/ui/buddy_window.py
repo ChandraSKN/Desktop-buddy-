@@ -22,6 +22,7 @@ from ..config import (
     MEMORY_DB,
     SIT_AFTER,
     STEP_RATE,
+    VOICE,
     WALK_SPEED,
     WIN_H,
     WIN_W,
@@ -49,6 +50,7 @@ from .corrector_panel import CorrectorPanel
 from .meeting_card import MeetingCard
 from .minutes_bar import MinutesBar
 from .timers import after
+from .voice import ListenerThread, Speaker
 
 
 class Buddy(QWidget):
@@ -94,6 +96,16 @@ class Buddy(QWidget):
         self.fixer = CorrectorPanel(self)
         self.chat = AssistantPanel(self, self.make_agent)
         self.minutes = MinutesBar(self, self.memory)
+        self.listen = self.settings.value("voice_listen", True, type=bool)
+        self.speak = self.settings.value("voice_speak", True, type=bool)
+        self.voice_state = "off"
+        self.speaker = Speaker(self)
+        self.listener = ListenerThread()
+        self.listener.wake.connect(self.on_wake)
+        self.listener.heard.connect(self.on_heard)
+        self.listener.status.connect(self._voice_status)
+        if self.listen and VOICE:
+            after(self, 2500, self.listener.start)
         after(self, 3000, self.minutes.resume_pending)
         self.bubble = Bubble()
         self.card = MeetingCard(self)
@@ -207,6 +219,8 @@ class Buddy(QWidget):
     # ---- reminders ------------------------------------------------------------
     def check_reminders(self):
         self.minutes.tick()
+        # don't listen while speaking (he'd hear himself) or while recording minutes
+        self.listener.hold = self.speaker.speaking or self.minutes.recorder.recording
         here = not self.idle.tracker.away       # no break reminders for an empty desk
         for reminder in self.schedule.due(datetime.now(UTC), self.events,
                                           self.wellness and here):
@@ -262,6 +276,52 @@ class Buddy(QWidget):
             QDesktopServices.openUrl(QUrl(self.outlook_url()))
         if action in ("join", "outlook", "dismiss"):
             self.acknowledge(key)
+
+    # ---- voice ------------------------------------------------------------------
+    def _voice_status(self, state):
+        self.voice_state = state
+        print(f"voice: {state}", flush=True)
+        if state.startswith("error"):
+            self.say("I can't hear you: " + state[7:], 6000)
+
+    def on_wake(self):
+        self.stand_up()
+        self.speaker.stop()
+        self.say("👂 Yes?", 8000)
+
+    def on_heard(self, text):
+        self.stand_up()
+        self.say(f"🎤 “{text}”", 20000)
+        if not self.chat.ask(text, spoken=True):
+            self.voice_reply("Hang on, I'm still answering the last one.")
+
+    def voice_reply(self, text):
+        """Show the reply in a bubble and, unless voice is off, say it."""
+        self.say(text[:220] + ("…" if len(text) > 220 else ""), max(5000, 70 * len(text)))
+        if self.speak:
+            self.speaker.say(text)
+            self.listener.hold = True
+
+    def push_to_talk(self):
+        if VOICE and not self.listener.isRunning():
+            self.listener.start()
+        self.listener.push_to_talk()
+        self.stand_up()
+        self.say("🎤 Listening… go ahead.", 8000)
+
+    def toggle_listen(self):
+        self.listen = not self.listen
+        self.settings.setValue("voice_listen", self.listen)
+        self.listener.enabled = self.listen
+        if self.listen and VOICE and not self.listener.isRunning():
+            self.listener.start()
+        self.say("Say “Hey Buddy” any time." if self.listen else "Okay, I won't listen.", 3000)
+
+    def toggle_speak(self):
+        self.speak = not self.speak
+        self.settings.setValue("voice_speak", self.speak)
+        if not self.speak:
+            self.speaker.stop()
 
     def join_meeting(self, event):
         """Open the meeting's link, stop reminding about it, and offer to take minutes."""
@@ -354,7 +414,8 @@ class Buddy(QWidget):
         # XWayland may never report the pointer leaving (it keeps the last position while
         # the pointer is over Wayland windows), so a hover lapses when the pointer goes still.
         hovering = self.hovered and time.monotonic() - self.last_pointer < HOVER_HOLD
-        return self.paused or hovering or self.busy or self._drag_offset is not None
+        talking = self.speaker.mouth() is not None
+        return self.paused or hovering or self.busy or talking or self._drag_offset is not None
 
     def pick_next(self):
         now = time.monotonic()
@@ -444,7 +505,7 @@ class Buddy(QWidget):
         else:
             wave_t = time.monotonic() - self.wave_start if self.wave_start is not None else None
             model3d.draw_model(p, self.width(), self.height(), self.phase, walking, self.breath,
-                               self.yaw, wave_t, self.pad + WIN_W / 2)
+                               self.yaw, wave_t, self.pad + WIN_W / 2, self.speaker.mouth())
         p.end()
         self._frame = img
         # Only the character's own pixels catch the mouse; clicks elsewhere reach the
@@ -476,6 +537,7 @@ class Buddy(QWidget):
 
     def mousePressEvent(self, e):
         self.stand_up()
+        self.speaker.stop()             # a click interrupts him
         if e.button() == Qt.MouseButton.LeftButton:
             self._press = e.globalPosition().toPoint()
 
@@ -513,6 +575,14 @@ class Buddy(QWidget):
         dock = menu.addAction("Keep on right side", self.toggle_dock)
         dock.setCheckable(True); dock.setChecked(self.docked)
 
+        menu.addSeparator()
+        menu.addAction("🎤  Talk to Buddy", self.push_to_talk)
+        listen = menu.addAction("Listen for “Hey Buddy”", self.toggle_listen)
+        listen.setCheckable(True); listen.setChecked(self.listen)
+        speak = menu.addAction("Speak replies", self.toggle_speak)
+        speak.setCheckable(True); speak.setChecked(self.speak)
+        voice = menu.addAction("Voice: " + self.voice_state)
+        voice.setEnabled(False)
         menu.addSeparator()
         wellness = menu.addAction("Hourly water + movement reminders", self.toggle_wellness)
         wellness.setCheckable(True); wellness.setChecked(self.wellness)
@@ -561,6 +631,9 @@ class Buddy(QWidget):
             after(self, 500, self.quit_safely)
             return
         self.minutes.shutdown()         # finishes the audio; minutes resume at the next start
+        self.speaker.stop()
+        if self.listener.isRunning():
+            self.listener.stop()
         QApplication.quit()
 
     def toggle_pause(self):

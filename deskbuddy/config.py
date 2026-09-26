@@ -45,3 +45,6 @@ MINUTES_DIR = os.environ.get("BUDDY_MINUTES_DIR", str(Path.home() / "Documents" 
 STOP_AFTER_END = 10 * 60        # still recording this long after the meeting's end: stop
 MAX_RECORDING = 4 * 60 * 60     # hard limit, in case the end is unknown
 MIC_CHECK_EVERY = 20            # seconds between "is another app using the mic?" checks
+
+# voice: set BUDDY_VOICE=0 to never open the microphone for listening (tests do)
+VOICE = os.environ.get("BUDDY_VOICE", "1") != "0"

@@ -1,0 +1,121 @@
+"""Hearing "Hey Buddy": cutting the mic stream into utterances and spotting the wake phrase.
+
+Everything here runs on this computer, and nothing is kept: audio lives in memory only
+until it's been checked.
+
+1. Endpointer: an adaptive energy gate finds where speech starts and stops (the noise
+   floor follows the room, so a fan or AC doesn't count as speech).
+2. WakeListener: each utterance goes to the tiny English Whisper model, which is fast.
+   If it starts with the wake phrase, the command is transcribed properly with the
+   multilingual model, either from the same breath ("Hey Buddy, what's next?") or
+   from the next thing said within a few seconds ("Hey Buddy." … "What's next?").
+
+Transcribers are passed in, so this logic is testable without audio or models."""
+
+import re
+from difflib import SequenceMatcher
+
+import numpy as np
+
+RATE = 16000
+FRAME = 480                       # 30 ms
+FOLLOW_UP = 8.0                   # seconds to say the command after a bare "Hey Buddy"
+
+_WAKE = re.compile(r"\b(hey|hi|hay|hei|a|ok|okay)[\s,.!]+(buddy|buddie|budy|bady|body|buddi|bodhi|birdie)\b")
+
+
+def normalize(text):
+    """Lower-case, punctuation (other than , . !) to spaces. Same length as text, so
+    positions found here are positions in the original."""
+    return "".join(c if (c.isalnum() or c.isspace() or c in ",.!") else " " for c in text.lower())
+
+
+def find_wake(text):
+    """(start, end) of the wake phrase if it's among the first few words, else None."""
+    t = normalize(text)
+    m = _WAKE.search(t)
+    if m and len(t[:m.start()].split()) <= 2:
+        return m.span()
+    words = [(w.start(), w.end()) for w in re.finditer(r"[^\s,.!]+", t)]
+    best = (0.82, None)                               # fuzzy: "heybuddy", "hay bud e"
+    for i in range(min(3, len(words))):
+        for n in (1, 2, 3):
+            if i + n > len(words):
+                break
+            candidate = "".join(t[a:b] for a, b in words[i:i + n])
+            ratio = SequenceMatcher(None, candidate, "heybuddy").ratio()
+            if ratio >= best[0]:
+                best = (ratio, (words[i][0], words[i + n - 1][1]))
+    return best[1]
+
+
+def strip_wake(text):
+    """The command part of 'Hey Buddy, what's my next meeting?'."""
+    span = find_wake(text)
+    return (text[span[1]:] if span else text).lstrip(" ,.!?").strip()
+
+
+class Endpointer:
+    """Feed 30 ms int16 frames; get back finished utterances (float32 arrays)."""
+
+    START_FRAMES = 5              # 150 ms above the gate to start
+    END_FRAMES = 25               # 750 ms below it to finish
+    PRE_ROLL = 10                 # keep 300 ms before the start
+    MIN_FRAMES = 12               # ignore blips under 360 ms
+    MAX_FRAMES = 400              # cut at 12 s
+
+    def __init__(self):
+        self.floor = 0.003
+        self.frames, self.pre = [], []
+        self.active, self.loud, self.quiet = False, 0, 0
+
+    def feed(self, frame):
+        audio = frame.astype(np.float32) / 32768.0
+        rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
+        start_gate = max(self.floor * 3.0, 0.004)
+        if not self.active:
+            self.pre = (self.pre + [audio])[-self.PRE_ROLL:]
+            if rms > start_gate:
+                self.loud += 1
+                if self.loud >= self.START_FRAMES:
+                    self.active, self.frames, self.quiet = True, list(self.pre), 0
+            else:
+                self.loud = 0
+                self.floor = 0.95 * self.floor + 0.05 * rms          # track the room
+            return None
+        self.frames.append(audio)
+        self.quiet = self.quiet + 1 if rms < max(self.floor * 2.0, 0.003) else 0
+        if self.quiet >= self.END_FRAMES or len(self.frames) >= self.MAX_FRAMES:
+            frames, self.frames, self.active, self.loud, self.pre = self.frames, [], False, 0, []
+            if len(frames) - self.quiet >= self.MIN_FRAMES:
+                return np.concatenate(frames)
+        return None
+
+
+class WakeListener:
+    def __init__(self, quick, full):
+        """quick(audio) -> text: fast English model for the wake phrase.
+        full(audio) -> text: multilingual model for the command."""
+        self.quick, self.full = quick, full
+        self.awaiting_until = 0.0
+
+    def expect_command(self, now, seconds=FOLLOW_UP):
+        """The next utterance is a command (after "Hey Buddy." or push-to-talk)."""
+        self.awaiting_until = now + seconds
+
+    def on_utterance(self, audio, now):
+        """Returns None, ("wake",) or ("command", text)."""
+        if now < self.awaiting_until:
+            self.awaiting_until = 0.0
+            text = strip_wake(self.full(audio))
+            return ("command", text) if text else None
+        heard = self.quick(audio)
+        span = find_wake(heard)
+        if span is None:
+            return None
+        rest = heard[span[1]:]
+        if len(rest.split()) >= 2:
+            command = strip_wake(self.full(audio)) or rest.strip(" ,.!?")
+            return ("command", command)
+        self.expect_command(now)
+        return ("wake",)

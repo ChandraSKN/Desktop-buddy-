@@ -79,7 +79,7 @@ def test_chat_streams_a_reply_from_the_agent(buddy, qtbot, monkeypatch):
     from deskbuddy.services import agent as agent_mod
 
     class FakeAgent:
-        def send(self, text, on_text, on_action):
+        def send(self, text, on_text, on_action, spoken=False):
             on_text("Your next meeting ")
             on_text("is at 15:00.")
             return "Your next meeting is at 15:00."
@@ -99,3 +99,44 @@ def test_a_reminder_the_assistant_set_fires_on_screen(buddy):
     buddy.check_reminders()
     assert "Email Ravi" in buddy.bubble.text
     assert buddy.memory.pending_reminders() == []
+
+
+def test_heard_speech_goes_to_the_assistant_and_the_reply_is_spoken(buddy, qtbot, monkeypatch):
+    from deskbuddy.services import agent as agent_mod
+
+    class FakeAgent:
+        def send(self, text, on_text, on_action, spoken=False):
+            assert spoken
+            return f"You asked: {text}"
+
+    spoken = []
+    monkeypatch.setattr(agent_mod, "available", lambda: True)
+    monkeypatch.setattr(buddy.speaker, "say", lambda text: spoken.append(text) or True)
+    buddy.chat.make_agent = FakeAgent
+    buddy.on_heard("what's my next meeting")
+    qtbot.waitUntil(lambda: bool(spoken), timeout=3000)
+    assert spoken == ["You asked: what's my next meeting"]
+    assert "🎤 what's my next meeting" in buddy.chat.log.toPlainText()
+
+
+def test_he_stands_still_and_shows_his_mouth_while_talking(buddy, monkeypatch):
+    from deskbuddy.character import model3d
+    if not model3d.can_talk():
+        pytest.skip("talk frames not rendered")
+    monkeypatch.setattr(buddy.speaker, "mouth", lambda: 3)
+    assert buddy.frozen()
+    buddy.render_frame()
+    open_mouth = buddy._frame.copy()
+    monkeypatch.setattr(buddy.speaker, "mouth", lambda: None)
+    buddy.render_frame()
+    assert open_mouth != buddy._frame
+
+
+def test_speaking_can_be_turned_off(buddy, monkeypatch):
+    said = []
+    monkeypatch.setattr(buddy.speaker, "say", lambda text: said.append(text))
+    monkeypatch.setattr(buddy.settings, "setValue", lambda *a: None)      # keep your real settings
+    buddy.speak = True
+    buddy.toggle_speak()
+    buddy.voice_reply("hello")
+    assert said == [] and "hello" in buddy.bubble.text

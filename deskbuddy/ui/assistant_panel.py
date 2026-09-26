@@ -21,13 +21,14 @@ class AgentWorker(QThread):
     done = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, agent, message):
+    def __init__(self, agent, message, spoken=False):
         super().__init__()
-        self.agent, self.message = agent, message
+        self.agent, self.message, self.spoken = agent, message, spoken
 
     def run(self):
         try:
-            self.done.emit(self.agent.send(self.message, self.text.emit, self.action.emit))
+            self.done.emit(self.agent.send(self.message, self.text.emit, self.action.emit,
+                                           spoken=self.spoken))
         except Exception as exc:            # shown in the panel; the app keeps running
             self.failed.emit(agent_mod.friendly_error(exc))
 
@@ -58,6 +59,8 @@ class AssistantPanel(QWidget):
         head = QHBoxLayout()
         head.addWidget(QLabel("💬  Ask Buddy", objectName="title"))
         head.addStretch()
+        head.addWidget(QPushButton("🎤", objectName="small", clicked=lambda: self.buddy.push_to_talk(),
+                                   toolTip="Talk to Buddy (or just say “Hey Buddy”)"))
         head.addWidget(QPushButton("New chat", objectName="small", clicked=self.new_chat))
         head.addWidget(QPushButton("✍️ Fix text", objectName="small", clicked=self.open_fixer))
         head.addWidget(QPushButton("✕", objectName="close", clicked=self.close))
@@ -87,6 +90,7 @@ class AssistantPanel(QWidget):
         if self.worker and self.worker.isRunning():
             return
         self.agent = None
+        self.spoken = False
         self._html = []
         self._render()
         if agent_mod.available():
@@ -99,25 +103,39 @@ class AssistantPanel(QWidget):
 
     def send(self):
         text = self.input.toPlainText().strip()
-        if not text or (self.worker and self.worker.isRunning()):
-            return
+        if text and self.ask(text):
+            self.input.clear()
+
+    @property
+    def busy(self):
+        return bool(self.worker and self.worker.isRunning())
+
+    def ask(self, text, spoken=False):
+        """Put a question to the assistant (typed, or heard by voice). False if it can't
+        be asked right now."""
+        if self.busy:
+            return False
         if not agent_mod.available():
             self._add("buddy", agent_mod.setup_hint())
-            return
+            if spoken:
+                self.buddy.voice_reply("I need a Claude API key before I can answer. "
+                                       "Add one in the settings.")
+            return False
         if self.agent is None:
             self.agent = self.make_agent()
-        self.input.clear()
-        self._add("you", text)
+        self.spoken = spoken
+        self._add("you", ("🎤 " if spoken else "") + text)
         self._reply = ""
         self._add("buddy", "…")
         self.send_btn.setEnabled(False)
         self.status.setText("Thinking…")
-        self.worker = AgentWorker(self.agent, text)
+        self.worker = AgentWorker(self.agent, text, spoken)
         self.worker.text.connect(self.on_text)
         self.worker.action.connect(self.buddy.open_meeting_link)
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
         self.worker.start()
+        return True
 
     def on_text(self, chunk):
         self._reply += chunk
@@ -128,10 +146,14 @@ class AssistantPanel(QWidget):
         self._html[-1] = self._bubble("buddy", reply or "(no reply)")
         self._render()
         self._finish()
-        if not self.isVisible():          # you closed the panel while he was answering
+        if self.spoken:
+            self.buddy.voice_reply(reply)
+        elif not self.isVisible():        # you closed the panel while he was answering
             self.buddy.say(reply[:140] + ("…" if len(reply) > 140 else ""), 8000)
 
     def on_failed(self, message):
+        if self.spoken:
+            self.buddy.voice_reply(message)
         self._html[-1] = self._bubble("error", message)
         self._render()
         self._finish()

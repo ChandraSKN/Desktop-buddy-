@@ -14,14 +14,15 @@ from .ui.buddy_window import Buddy  # noqa: E402
 
 
 def describe(buddy):
-    """One line of live state, for `systemctl --user kill -s USR1 desktop-buddy`."""
+    """One line of live state, for `systemctl --user kill --kill-whom=main -s USR1 desktop-buddy`."""
     return (f"state={buddy.state} chair={buddy.chair and buddy.chair.phase} "
             f"paused={buddy.paused} hovered={buddy.hovered} frozen={buddy.frozen()} "
             f"busy={buddy.busy} card={buddy.card.isVisible()} "
             f"since_click={time.monotonic() - buddy.last_click:.0f}s "
             f"you_idle={buddy.idle.idle_seconds:.0f}s away={buddy.idle.tracker.away} "
             f"minutes={buddy.minutes.state if buddy.minutes.isVisible() else None} "
-            f"recording={buddy.minutes.recorder.recording}")
+            f"recording={buddy.minutes.recorder.recording} voice={buddy.voice_state} "
+            f"speaking={buddy.speaker.speaking}")
 
 
 def main():
