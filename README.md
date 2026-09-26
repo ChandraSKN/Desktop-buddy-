@@ -35,15 +35,46 @@ After editing the code, run `./run.sh` to restart with the changes.
 
 ## Character and controls
 
-By default Buddy is a rigged, toon-shaded **3D model built in Blender** from
-`assets/Hero_image.png`: side-swept black hair, moustache, light beard, broad shoulders, dark suit, open-collar white shirt,
-belt and dress shoes. `model3d.py` plays frames rendered from it: a 16-frame walk and an
-idle pose at 7 turn angles, plus a 12-frame wave at 5 angles.
+Buddy is a rigged, toon-shaded **3D model built in Blender** from `assets/Hero_image.png`:
+side-swept black hair, moustache, light beard, broad shoulders, dark suit, open-collar
+white shirt, belt and dress shoes. The app plays frames pre-rendered from it: a 16-frame
+walk and an idle pose at 7 turn angles, a 12-frame wave at 5 angles, and the chair sequence.
 
 ![Blender model: idle, walking sideways, walking toward you, waving](docs/blender-model.png)
 
-To change the model, edit `blender/build_model.py` (geometry, colours, rig) or
-`blender/render_frames.py` (poses). Then, in Blender's Python console:
+Only the character's own pixels catch the mouse: clicks on the empty space around him go to
+the window underneath.
+
+- **Click:** open the paragraph correction panel.
+- **Right-click → Keep on right side:** enabled by default. Buddy stays at the
+  bottom right of the primary screen's usable area, above the taskbar, taking
+  occasional small steps within 36 pixels of the right edge.
+- Turn docking off to let Buddy walk across the screen and enable dragging.
+- **Stay here / Resume walking:** pause or resume roaming. Docking takes priority.
+- **Hourly water + movement reminders:** enabled by default. Every hour, Buddy waves and
+  asks you to drink water, stand, stretch, and walk. **Preview wellness reminder** shows one now.
+- Reminders wait while the correction panel is open and appear one at a time.
+- Docking and wellness preferences persist across restarts.
+
+### Taking a seat
+
+If you don't click him for **10 minutes**, he pulls up a wooden chair from his right, drags
+it behind him and sits down, looking around now and then. Any click, a reminder, or you
+coming back to the computer makes him stand up and push the chair away (a left click still
+opens the correction panel). To see it sooner: `BUDDY_SIT_AFTER=30 .venv/bin/python buddy.py`.
+
+### Knowing when you're away
+
+Buddy asks GNOME's idle monitor (`org.gnome.Mutter.IdleMonitor`) how long it's been since
+you last used the keyboard or mouse, in *any* app. After **5 minutes** idle you count as
+away: hourly break reminders are held back (no nagging an empty desk). When you come back
+he gets up, says *"Welcome back! You were away 23 min."*, and since that was a break, the
+next wellness reminder is an hour from then. Tune with `BUDDY_AWAY_AFTER` (seconds).
+
+### Changing the model
+
+Edit `blender/build_model.py` (geometry, colours, rig) or `blender/render_frames.py`
+(poses). Then, in Blender's Python console:
 
 ```python
 base = "/path/to/desktop-buddy/blender/"
@@ -52,51 +83,15 @@ rf = {}; exec(open(base + "render_frames.py").read(), rf)
 rf["OUT_DIR"] = "/tmp/buddy_frames"; rf["render"](rf["jobs"]())   # ~2 min
 ```
 
-Finally, run `.venv/bin/python blender/pack_frames.py /tmp/buddy_frames` to rebuild
-`assets/model3d/`. The saved scene is `blender/buddy_model.blend`.
-
-**Taking a seat:** if you don't click him for 10 minutes (`SIT_AFTER` in `buddy.py`), he
-pulls up a wooden chair from his right, drags it behind him and sits down, looking around
-now and then. Any click, or a meeting/wellness reminder, makes him stand up and push the
-chair away; a left click still opens the correction panel. This only happens with the Blender
-model. The frames come from `blender/sit_frames.py` (it builds the chair and renders
-pull / sit / seated at the idle angle, plus the chair as its own layer that the app slides
-and fades behind him). To re-render (~1 min):
+and run `.venv/bin/python blender/pack_frames.py /tmp/buddy_frames` to rebuild
+`assets/model3d/`. The chair and sitting frames come from `blender/sit_frames.py`, which
+builds the chair and renders pull / sit / seated at the idle angle, plus the chair as its own
+layer that the app slides and fades behind him. It runs headless (~1 min):
 
 ```bash
 BUDDY_FRAMES=/tmp/buddy_sit blender -b blender/buddy_model.blend --python blender/sit_frames.py
 .venv/bin/python blender/pack_frames.py /tmp/buddy_sit    # merges into the existing manifest
 ```
-
-Right-click → **Character** also offers the illustrated artwork and Astra's simple 3D model.
-The illustrated style is drawn from the original artwork (`sprite.png`, made from `assets/Hero_image.png`).
-The artwork stops at the knees, so `figure.py` extends each trouser leg by stretching the
-artwork's own bottom rows (keeping its shading and outline), adds dress shoes, and animates:
-
-- walking: legs swing and the stepping foot lifts while the planted foot stays down;
-  the upper body bobs and sways with each step
-- turning: he narrows and flips to face the way he walks
-- breathing while standing, and a waving hand (cut out at the wrist) during reminders
-
-Only the character's own pixels catch the mouse: clicks on the empty space around him go to
-the window underneath.
-
-- **Click:** open the existing paragraph correction panel.
-- **Right-click → Keep on right side:** enabled by default. Buddy stays at the
-  bottom right of the primary screen's usable area, above the taskbar, taking
-  occasional small steps within 36 pixels of the right edge.
-- Turn docking off to let Buddy walk across the screen and enable dragging.
-- **Stay here / Resume walking:** pause or resume roaming. Docking takes priority.
-- **Hourly water + movement reminders:** enabled by default. Every hour while
-  running, Buddy waves and asks you to drink water, stand, stretch, and walk.
-- **Preview wellness reminder:** try the reminder immediately.
-- Reminders wait while the correction panel is open and appear one at a time.
-- Docking and wellness preferences persist across restarts. The hourly timer
-  starts afresh at launch. After sleep, only one wellness reminder is shown.
-
-![Walking poses: standing, stride, stride, turning, waving](docs/character-walk.png)
-
-3D model option: ![3D walking poses](docs/3d-walk.png)
 
 ## Outlook meeting reminders
 
@@ -155,7 +150,7 @@ See Microsoft's [calendar sharing instructions](https://support.microsoft.com/en
 
 ## Paragraph correction
 
-The existing `corrector.py` backend is unchanged:
+`deskbuddy/services/corrector.py` tries, in order:
 
 1. Claude API with `ANTHROPIC_API_KEY` or `~/.config/desktop-buddy/api_key`.
 2. Logged-in `claude` CLI.
@@ -165,31 +160,70 @@ Paste a paragraph, click **Fix it** or press **Ctrl+Enter**, inspect the correct
 text and explanations, then **Copy**. Escape closes the panel. Text is sent to
 the selected correction service; calendar contents are not sent for correction.
 
-## Development and checks
+## Architecture
 
-- `buddy.py`: desktop window, menus, correction panel, meeting card, reminder delivery.
-- `model3d.py`: the Blender model (plays the sprite strips in `assets/model3d/`).
-- `blender/`: model build, render and packing scripts (`sit_frames.py`: chair + sitting), and the `.blend` file.
-- `figure.py`: the illustrated character (artwork + drawn shins/shoes, walk, turn, wave).
-- `avatar.py`: Astra's articulated 3D model (optional style).
-- `notifier.py`: desktop notifications over D-Bus (replace-in-place, Join/Dismiss buttons,
-  sound), with `notify-send` as a fallback.
-- `reminders.py`: bounded background feed download, recurrence parsing, join links, timing.
-- `corrector.py`: original correction backends.
-
-```bash
-PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m py_compile buddy.py avatar.py reminders.py
+```mermaid
+flowchart LR
+    subgraph ui[deskbuddy/ui]
+        W[BuddyWindow<br/>walk, dock, menu] --> B[Bubble]
+        W --> MC[MeetingCard]
+        W --> CP[CorrectorPanel]
+    end
+    subgraph character[deskbuddy/character]
+        CH[chair.ChairScene<br/>sit/stand timing] --> M3[model3d<br/>sprite playback]
+    end
+    subgraph services[deskbuddy/services]
+        R[reminders<br/>ICS feed, schedule]
+        N[notifier<br/>D-Bus notifications]
+        I[idle<br/>GNOME idle monitor]
+        C[corrector<br/>Claude / LanguageTool]
+    end
+    W --> CH
+    W --> M3
+    W --> R & N & I
+    CP --> C
+    BL[(blender/*.py<br/>headless renders)] -. frames + manifest .-> M3
 ```
 
-Test coverage includes hourly timing/resume, meeting lead time and duplicate
-suppression, repeating every 2 minutes until acknowledged, stopping after the grace
-period, the Outlook fallback link, join-link extraction, upcoming-meeting
-filtering, recurring events, exclusions, cancellation, time zones, URL
-validation, and the sit/stand frame sequencing. Offscreen smoke checks cover drawing, dock placement, reminder
-bubbles, and opening/closing the correction panel. The connected Outlook feed was
-verified to download and parse (times converted correctly to IST), and GNOME's D-Bus
-notification service was verified to show, replace and close notifications.
+- **Services know nothing about widgets.** `ReminderSchedule`, `AwayTracker` and
+  `ChairScene` are plain state machines fed with the current time, which is what makes
+  them testable without a screen.
+- **Pre-rendered 3D.** Blender renders the rigged model into sprite strips, so the app gets
+  real 3D shading at the cost of a few MB of PNGs and no GPU at runtime. The chair is a
+  separate layer because the character is always in front of it; in an orthographic view
+  moving it is just a 2D offset, so one chair image covers the whole pull animation.
+- **XWayland on purpose.** GNOME's Wayland session doesn't let apps place their own
+  windows, which a desktop companion must do, so Qt runs on `xcb`. The catch, handled in
+  `BuddyWindow.frozen()`: XWayland may never report the pointer leaving the window.
 
-GNOME/Wayland uses Qt's `xcb` backend through XWayland so window positioning works.
-Run `.venv/bin/python buddy.py` in a terminal to diagnose startup errors.
+## Development
+
+```
+buddy.py                  launcher (the systemd service runs this)
+deskbuddy/
+  app.py                  QApplication, live-state dump on SIGUSR1
+  config.py               tunables; timings overridable by BUDDY_* env vars
+  character/              model3d.py (drawing), chair.py (sit/stand sequence)
+  services/               reminders, notifier, idle, corrector (no widgets)
+  ui/                     buddy_window, bubble, meeting_card, corrector_panel, styles
+blender/                  model build + render + pack scripts, buddy_model.blend
+tests/                    pytest; test_window.py drives the real window off-screen
+```
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
+.venv/bin/ruff check .                          # lint
+.venv/bin/pytest                                # 25 tests, ~6 s, no display needed
+systemctl --user kill -s USR1 desktop-buddy     # print the running buddy's state…
+journalctl --user -u desktop-buddy -n 1         # …and read it
+```
+
+CI (`.github/workflows/ci.yml`) runs lint and the tests on every push.
+
+Tests cover: reminder timing (lead time, repeats until acknowledged, grace period, resume
+after sleep), recurring events, exclusions, cancellations, time zones, join-link
+extraction, URL validation, the chair sequence (including reversing midway), away/return
+detection and breaks, and the real window: drawing, sitting after no clicks and standing
+on a click, and not freezing on a stale hover.
+
+Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.

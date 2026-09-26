@@ -100,7 +100,7 @@ def correct_with_cli(text):
     try:
         out = json.loads(proc.stdout)
     except ValueError:
-        raise RuntimeError((proc.stderr or proc.stdout or "claude CLI failed").strip()[:300])
+        raise RuntimeError((proc.stderr or proc.stdout or "claude CLI failed").strip()[:300]) from None
     if out.get("is_error"):
         raise RuntimeError(str(out.get("result") or "Claude returned an error")[:300])
     return _parse(out.get("result", ""), text)

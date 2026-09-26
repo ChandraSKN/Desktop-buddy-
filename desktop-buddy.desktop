@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Desktop Buddy
-Comment=Wandering desktop companion that fixes your text
+Comment=Desktop companion with meeting reminders and a text fixer
 Exec=/home/tst-017-lenovo/Documents/chandra/desktop-buddy/run.sh
-Icon=/home/tst-017-lenovo/Documents/chandra/desktop-buddy/sprite.png
+Icon=/home/tst-017-lenovo/Documents/chandra/desktop-buddy/assets/icon.png
 X-GNOME-Autostart-enabled=true

@@ -8,13 +8,14 @@ layer that is drawn behind him."""
 
 import json
 import math
-from functools import lru_cache
-from pathlib import Path
+from functools import cache, lru_cache
 
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QImage, QPainter, QRadialGradient
 
-ASSETS = Path(__file__).resolve().parent / "assets" / "model3d"
+from ..config import ASSETS as _ASSETS_ROOT
+
+ASSETS = _ASSETS_ROOT / "model3d"
 WAVE_FPS = 14
 
 
@@ -27,7 +28,7 @@ def available():
     return (ASSETS / "manifest.json").exists()
 
 
-@lru_cache(maxsize=None)
+@cache
 def _strip(anim, yaw_index):
     info = _manifest()["anims"][anim][str(yaw_index)]
     img = QImage(str(ASSETS / info["file"]))
@@ -44,42 +45,8 @@ def can_sit():
     return "chair" in m and all(a in m["anims"] for a in ("pull", "sit", "seated"))
 
 
-# The chair sequence: phase -> (animation, frames per second, played backwards)
-SIT_PHASES = {
-    "fade_in": ("pull", None, False),     # the chair appears beside him
-    "pull": ("pull", 14, False),
-    "sit": ("sit", 14, False),
-    "seated": ("seated", 6, False),       # loops until he's disturbed
-    "stand": ("sit", 18, True),
-    "push": ("pull", 18, True),
-    "fade_out": ("pull", None, True),     # the chair disappears
-}
-FADE = 0.4
-
-
-def phase_length(phase):
-    anim, fps, _ = SIT_PHASES[phase]
-    if fps is None:
-        return FADE
-    return float("inf") if phase == "seated" else _strip(anim, _manifest()["sit_yaw_index"])[1] / fps
-
-
-def phase_time_for_frame(phase, frame):
-    """Seconds into phase at which it shows frame (to reverse halfway through)."""
-    anim, fps, backwards = SIT_PHASES[phase]
-    count = _strip(anim, _manifest()["sit_yaw_index"])[1]
-    return ((count - 1 - frame) if backwards else frame) / fps
-
-
-def phase_frame(phase, t):
-    anim, fps, backwards = SIT_PHASES[phase]
-    count = _strip(anim, _manifest()["sit_yaw_index"])[1]
-    if fps is None:
-        return 0
-    if phase == "seated":
-        return int(t * fps) % count
-    frame = min(count - 1, int(t * fps))
-    return count - 1 - frame if backwards else frame
+def sit_frame_count(anim):
+    return _strip(anim, _manifest()["sit_yaw_index"])[1]
 
 
 def _setup(p, height, walking, breath):
@@ -102,14 +69,11 @@ def _shadow(p, x, height, w):
     p.drawEllipse(QRectF(x - w / 2, height - 15, w, 14))
 
 
-def draw_sitting(p, width, height, phase, t, breath, cx=None):
-    """The chair sequence, character bottom-centred at cx; t is seconds into phase."""
+def draw_sitting(p, width, height, anim, frame, chair_alpha, breath, cx=None):
+    """A frame of the chair sequence (see chair.py), character bottom-centred at cx."""
     m = _manifest()
     cx = width / 2 if cx is None else cx
-    anim = SIT_PHASES[phase][0]
-    yi = m["sit_yaw_index"]
-    strip, _ = _strip(anim, yi)
-    frame = phase_frame(phase, t)
+    strip, _ = _strip(anim, m["sit_yaw_index"])
     fw, fh = m["frame_size"]
     ground = m["ground_y"]
     scale, breathe = _setup(p, height, False, breath)
@@ -117,11 +81,7 @@ def draw_sitting(p, width, height, phase, t, breath, cx=None):
     chair = m["chair"]
     cw, ch = chair["frame_size"]
     dx, dy = chair["pull_offsets"][frame] if anim == "pull" else (0.0, 0.0)
-    alpha = 1.0
-    if phase == "fade_in":
-        alpha = min(1.0, t / FADE)
-    elif phase == "fade_out":
-        alpha = max(0.0, 1 - t / FADE)
+    alpha = chair_alpha
     p.setOpacity(alpha * 0.8)
     _shadow(p, cx + dx * scale, height, 95 * scale)
     p.setOpacity(1.0)
@@ -137,7 +97,7 @@ def draw_sitting(p, width, height, phase, t, breath, cx=None):
     p.restore()
 
 
-@lru_cache(maxsize=None)
+@cache
 def _image(name):
     return QImage(str(ASSETS / name)).convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
 

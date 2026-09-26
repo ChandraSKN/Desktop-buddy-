@@ -12,18 +12,15 @@ python3 -m venv .venv
 echo "==> Installing dependencies (PyQt6, anthropic, Pillow)"
 .venv/bin/pip install -q -r requirements.txt
 
-echo "==> Building sprite.png from assets/Hero_image.png"
-.venv/bin/python make_sprite.py
-
 echo "==> Writing launcher entry"
 chmod +x run.sh
 cat > desktop-buddy.desktop <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Desktop Buddy
-Comment=Wandering desktop companion that fixes your text
+Comment=Desktop companion with meeting reminders and a text fixer
 Exec=$DIR/run.sh
-Icon=$DIR/sprite.png
+Icon=$DIR/assets/icon.png
 X-GNOME-Autostart-enabled=true
 DESKTOP
 mkdir -p ~/.local/share/applications

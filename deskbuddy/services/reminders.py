@@ -3,7 +3,7 @@ import re
 import urllib.request
 from collections import namedtuple
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -68,10 +68,10 @@ def parse_events(data, now):
             continue  # all-day items have no meeting start time
         if start.tzinfo is None:
             start = start.astimezone()
-        start = start.astimezone(timezone.utc)
+        start = start.astimezone(UTC)
         try:
             end = event.decoded('DTEND')
-            end = (end if end.tzinfo else end.astimezone()).astimezone(timezone.utc)
+            end = (end if end.tzinfo else end.astimezone()).astimezone(UTC)
         except (KeyError, AttributeError):
             end = start + timedelta(minutes=30)
         key = str(event.get('UID', '')) + '|' + start.isoformat()
@@ -97,12 +97,16 @@ class CalendarWorker(QThread):
                 data = response.read(5_000_001)
             if len(data) > 5_000_000:
                 raise ValueError('Calendar feed is too large.')
-            self.loaded.emit(parse_events(data, datetime.now(timezone.utc)))
+            self.loaded.emit(parse_events(data, datetime.now(UTC)))
         except ImportError:
             self.failed.emit('Calendar dependencies missing. Run setup.sh, then restart Buddy.')
         except Exception:
             # Never show the subscription URL (it can contain a private token).
             self.failed.emit('Calendar sync failed. Check your connection and Outlook ICS link.')
+
+
+def local_time(dt):
+    return dt.astimezone().strftime("%H:%M")
 
 
 def upcoming(events, now, limit=6):
@@ -136,6 +140,10 @@ class ReminderSchedule:
         self.next_wellness = now + timedelta(hours=1)
         self.next_at = {}     # meeting key -> when to remind next
         self.acked = {}       # meeting key -> forget after this time
+
+    def took_break(self, now):
+        """You were away from the computer: the next wellness reminder is an hour from now."""
+        self.next_wellness = now + timedelta(hours=1)
 
     def acknowledge(self, key, now):
         self.acked[key] = now + timedelta(days=1)

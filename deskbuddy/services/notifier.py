@@ -6,13 +6,12 @@ stacking up, and button clicks arrive as a signal. notify-send is the fallback."
 
 import html
 import shutil
-from pathlib import Path
 
 from PyQt6.QtCore import QMetaType, QObject, QProcess, pyqtSignal, pyqtSlot
-from PyQt6.QtDBus import (QDBusArgument, QDBusConnection, QDBusInterface, QDBusMessage,
-                          QDBusVariant)
+from PyQt6.QtDBus import QDBusArgument, QDBusConnection, QDBusInterface, QDBusMessage, QDBusVariant
 
-ICON = str(Path(__file__).resolve().parent / "sprite.png")
+from ..config import ICON
+
 SOUNDS = {"meeting": "message-new-instant", "wellness": "complete"}
 
 SERVICE = "org.freedesktop.Notifications"

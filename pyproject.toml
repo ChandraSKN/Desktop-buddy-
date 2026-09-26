@@ -1,0 +1,23 @@
+[project]
+name = "desktop-buddy"
+version = "0.2.0"
+description = "Animated desktop companion with Outlook meeting reminders and a text fixer"
+requires-python = ">=3.11"
+authors = [{ name = "Chandra Nadendla" }]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["blender"]          # runs inside Blender's own Python (bpy)
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E702", "E731"]              # `a; b` for paired Qt setters, small lambdas
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+qt_api = "pyqt6"
+
+[tool.ruff.lint.per-file-ignores]
+"deskbuddy/services/corrector.py" = ["E501"]   # the prompt text is kept on long lines

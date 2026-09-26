@@ -1,9 +1,17 @@
 import unittest
-from datetime import datetime, timedelta, timezone
-from reminders import (Event, ReminderSchedule, find_join_url, outlook_web_url, parse_events,
-                       upcoming, validate_url)
+from datetime import UTC, datetime, timedelta
 
-UTC = timezone.utc
+from deskbuddy.services.reminders import (
+    Event,
+    ReminderSchedule,
+    find_join_url,
+    outlook_web_url,
+    parse_events,
+    upcoming,
+    validate_url,
+)
+
+UTC = UTC
 NOW = datetime(2026, 9, 26, 10, 0, tzinfo=UTC)
 
 def ev(key, start, title, url=''):
@@ -58,7 +66,8 @@ END:VCALENDAR\r
     def test_url(self):
         self.assertEqual(validate_url('webcal://example.com/calendar.ics'), 'https://example.com/calendar.ics')
         for bad in ('http://example.com','file:///tmp/calendar','https://user:pass@example.com'):
-            with self.assertRaises(ValueError): validate_url(bad)
+            with self.assertRaises(ValueError):
+                validate_url(bad)
 
     def test_repeats_every_two_minutes_until_acknowledged(self):
         schedule = ReminderSchedule(NOW)
@@ -111,4 +120,5 @@ END:VCALENDAR\r
         self.assertEqual([e.title for e in upcoming([done, running, later], NOW)], ['Running', 'Later'])
 
 
-if __name__ == '__main__': unittest.main()
+if __name__ == "__main__":
+    unittest.main()
