@@ -33,3 +33,7 @@ HOVER_HOLD = 3.0
 
 # you, away from the computer (keyboard and mouse idle, from GNOME)
 AWAY_AFTER = _seconds("BUDDY_AWAY_AFTER", 5 * 60)
+
+# the assistant's long-term memory (facts + reminders it set)
+MEMORY_DB = os.environ.get("BUDDY_MEMORY_DB",
+                           str(Path.home() / ".local" / "share" / "desktop-buddy" / "memory.db"))

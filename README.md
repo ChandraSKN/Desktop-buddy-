@@ -1,8 +1,9 @@
 # Desktop Buddy
 
-A small, always-on-top animated character companion for Linux, with paragraph correction,
-hourly wellness reminders, and Outlook meeting reminders delivered as real desktop
-notifications.
+A small, always-on-top animated 3D companion for Linux: an **AI assistant** (Claude, with
+tools and long-term memory) that knows your Outlook meetings, sets reminders and remembers
+what you tell it, plus meeting reminders as real desktop notifications, wellness nudges,
+and a text fixer.
 
 ## Start
 
@@ -45,7 +46,8 @@ walk and an idle pose at 7 turn angles, a 12-frame wave at 5 angles, and the cha
 Only the character's own pixels catch the mouse: clicks on the empty space around him go to
 the window underneath.
 
-- **Click:** open the paragraph correction panel.
+- **Click:** open **Ask Buddy** (the assistant). Right-click → **Fix text…** for the
+  paragraph correction panel (also a button in the chat header).
 - **Right-click → Keep on right side:** enabled by default. Buddy stays at the
   bottom right of the primary screen's usable area, above the taskbar, taking
   occasional small steps within 36 pixels of the right edge.
@@ -92,6 +94,50 @@ layer that the app slides and fades behind him. It runs headless (~1 min):
 BUDDY_FRAMES=/tmp/buddy_sit blender -b blender/buddy_model.blend --python blender/sit_frames.py
 .venv/bin/python blender/pack_frames.py /tmp/buddy_sit    # merges into the existing manifest
 ```
+
+## Ask Buddy (the assistant)
+
+Click Buddy and ask in plain words:
+
+- *"What's my next meeting?"* / *"Am I free after lunch?"*
+- *"Remind me after the design review to email Ravi"* → fires when that meeting ends
+- *"Remind me in 20 minutes to stretch"*, *"What reminders do I have?"*, *"Cancel it"*
+- *"Remember that Ravi prefers Slack"* → used in later conversations; *"Forget that"*
+- *"Join my next meeting"* → opens its Teams / Meet / Zoom link
+
+He's Claude (`claude-opus-5`, adaptive thinking) with eight tools: `get_meetings`,
+`create_reminder`, `list_reminders`, `cancel_reminder`, `remember`, `recall`, `forget`,
+`join_meeting`. Replies stream in as they're written. **He can't** send email, read your
+files, or run commands; that's deliberate.
+
+**Setup:** save an Anthropic API key (console.anthropic.com) without it touching your
+shell history or the screen:
+
+```bash
+mkdir -p ~/.config/desktop-buddy && read -rs K && printf '%s' "$K" > ~/.config/desktop-buddy/api_key \
+  && chmod 600 ~/.config/desktop-buddy/api_key && unset K
+```
+
+(or set `ANTHROPIC_API_KEY`). Without a key the chat says how to connect and sends nothing.
+
+**Memory** is a local SQLite file, `~/.local/share/desktop-buddy/memory.db` (owner-only),
+holding the facts you asked him to remember and the reminders he set. Facts are found with
+SQLite FTS5 full-text search (BM25 ranking, word stemming); each turn, the few that match
+your message are included in the request. Reminders he sets survive restarts and fire once
+through the same notification + speech bubble + wave as meeting reminders.
+
+**What's sent to Claude:** your message, the current time, your next three meetings'
+titles and times, and matching saved facts, plus whatever tools return (e.g. meeting
+lists). Meeting descriptions are never sent, and invite text is treated as information,
+not instructions: `join_meeting` only opens a link from your own calendar feed, looked up
+by meeting key.
+
+**Cost:** on `claude-opus-5` ($5 / $25 per million input / output tokens) a message is a
+few thousand input tokens (the system prompt and tool list are prompt-cached, which cuts
+repeat input cost) plus the reply and its thinking: roughly 1–3 US cents, more when he uses
+several tools in one answer. Change `MODEL` in `deskbuddy/services/agent.py` to trade cost
+for quality. If the model declines a
+request, the API retries it on another model automatically (`fallbacks: "default"`).
 
 ## Outlook meeting reminders
 
@@ -168,6 +214,7 @@ flowchart LR
         W[BuddyWindow<br/>walk, dock, menu] --> B[Bubble]
         W --> MC[MeetingCard]
         W --> CP[CorrectorPanel]
+        W --> AP[AssistantPanel<br/>chat, streaming]
     end
     subgraph character[deskbuddy/character]
         CH[chair.ChairScene<br/>sit/stand timing] --> M3[model3d<br/>sprite playback]
@@ -177,17 +224,28 @@ flowchart LR
         N[notifier<br/>D-Bus notifications]
         I[idle<br/>GNOME idle monitor]
         C[corrector<br/>Claude / LanguageTool]
+        AG[agent<br/>Claude tool loop]
+        T[agent_tools<br/>8 validated tools]
+        MEM[(memory<br/>SQLite + FTS5)]
     end
     W --> CH
     W --> M3
     W --> R & N & I
     CP --> C
+    AP --> AG --> T
+    T --> MEM & R
+    W --> MEM
     BL[(blender/*.py<br/>headless renders)] -. frames + manifest .-> M3
 ```
 
-- **Services know nothing about widgets.** `ReminderSchedule`, `AwayTracker` and
-  `ChairScene` are plain state machines fed with the current time, which is what makes
-  them testable without a screen.
+- **Services know nothing about widgets.** `ReminderSchedule`, `AwayTracker`, `ChairScene`,
+  `MemoryStore`, `ToolBox` and `Agent` are plain Python fed with the current time (and, for
+  the agent, a client), which is what makes them testable without a screen or network.
+- **The agent loop is hand-written, not the SDK's tool runner**, so text can stream into
+  the chat as it's generated, tool inputs can be validated before running (they stream
+  eagerly, so the API doesn't validate them), and a refusal or truncated turn never runs
+  its tools. History is append-only and per-turn facts ride in the user message, so the
+  system prompt and tools stay a stable, cached prefix.
 - **Pre-rendered 3D.** Blender renders the rigged model into sprite strips, so the app gets
   real 3D shading at the cost of a few MB of PNGs and no GPU at runtime. The chair is a
   separate layer because the character is always in front of it; in an orthographic view
@@ -204,8 +262,10 @@ deskbuddy/
   app.py                  QApplication, live-state dump on SIGUSR1
   config.py               tunables; timings overridable by BUDDY_* env vars
   character/              model3d.py (drawing), chair.py (sit/stand sequence)
-  services/               reminders, notifier, idle, corrector (no widgets)
-  ui/                     buddy_window, bubble, meeting_card, corrector_panel, styles
+  services/               reminders, notifier, idle, corrector,
+                          agent, agent_tools, memory (no widgets)
+  ui/                     buddy_window, assistant_panel, bubble, meeting_card,
+                          corrector_panel, styles
 blender/                  model build + render + pack scripts, buddy_model.blend
 tests/                    pytest; test_window.py drives the real window off-screen
 ```
@@ -213,7 +273,7 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 25 tests, ~6 s, no display needed
+.venv/bin/pytest                                # 56 tests, ~7 s, no display or network
 systemctl --user kill -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```
@@ -223,7 +283,9 @@ CI (`.github/workflows/ci.yml`) runs lint and the tests on every push.
 Tests cover: reminder timing (lead time, repeats until acknowledged, grace period, resume
 after sleep), recurring events, exclusions, cancellations, time zones, join-link
 extraction, URL validation, the chair sequence (including reversing midway), away/return
-detection and breaks, and the real window: drawing, sitting after no clicks and standing
-on a click, and not freezing on a stale hover.
+detection and breaks, memory search/forget/reminders, every tool's input validation, the
+agent loop against a fake Claude (tool round-trips, request shape, cache-stable prompts,
+refusal and truncation handling), and the real window: drawing, sitting and standing, the
+stale-hover fix, the chat with and without a key, and assistant reminders firing.
 
 Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.

@@ -60,3 +60,42 @@ def test_coming_back_greets_you_and_counts_as_a_break(buddy):
     assert "20 min" in buddy.bubble.text
     left = buddy.schedule.next_wellness - datetime.now(UTC)
     assert timedelta(minutes=59) < left <= timedelta(hours=1)
+
+
+def test_without_an_api_key_the_chat_explains_how_to_connect(buddy, monkeypatch):
+    from deskbuddy.services import agent as agent_mod
+    monkeypatch.setattr(agent_mod, "available", lambda: False)
+    buddy.open_chat()
+    buddy.chat.new_chat()
+    assert "API key" in buddy.chat.log.toPlainText()
+    buddy.chat.input.setPlainText("hello")
+    buddy.chat.send()
+    assert buddy.chat.worker is None                          # nothing was sent anywhere
+    buddy.chat.close()
+    assert not buddy.busy
+
+
+def test_chat_streams_a_reply_from_the_agent(buddy, qtbot, monkeypatch):
+    from deskbuddy.services import agent as agent_mod
+
+    class FakeAgent:
+        def send(self, text, on_text, on_action):
+            on_text("Your next meeting ")
+            on_text("is at 15:00.")
+            return "Your next meeting is at 15:00."
+
+    monkeypatch.setattr(agent_mod, "available", lambda: True)
+    buddy.chat.make_agent = FakeAgent
+    buddy.open_chat()
+    buddy.chat.input.setPlainText("what's next?")
+    buddy.chat.send()
+    qtbot.waitUntil(lambda: not buddy.chat.worker.isRunning(), timeout=3000)
+    qtbot.waitUntil(lambda: "15:00" in buddy.chat.log.toPlainText(), timeout=3000)
+    assert "what's next?" in buddy.chat.log.toPlainText()
+
+
+def test_a_reminder_the_assistant_set_fires_on_screen(buddy):
+    buddy.memory.add_reminder("Email Ravi", datetime.now(UTC) - timedelta(seconds=1))
+    buddy.check_reminders()
+    assert "Email Ravi" in buddy.bubble.text
+    assert buddy.memory.pending_reminders() == []

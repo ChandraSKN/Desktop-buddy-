@@ -19,13 +19,17 @@ from ..config import (
     DOCK_SPEED,
     FPS,
     HOVER_HOLD,
+    MEMORY_DB,
     SIT_AFTER,
     STEP_RATE,
     WALK_SPEED,
     WIN_H,
     WIN_W,
 )
+from ..services.agent import Agent
+from ..services.agent_tools import ToolBox
 from ..services.idle import IdleMonitor
+from ..services.memory import MemoryStore
 from ..services.notifier import Notifier
 from ..services.reminders import (
     WELLNESS_TEXT,
@@ -39,6 +43,7 @@ from ..services.reminders import (
     upcoming,
     validate_url,
 )
+from .assistant_panel import AssistantPanel
 from .bubble import Bubble
 from .corrector_panel import CorrectorPanel
 from .meeting_card import MeetingCard
@@ -84,7 +89,9 @@ class Buddy(QWidget):
         self.pad = 0             # window grows to the left while the chair is out
         self.chair = None        # ChairScene while pulling up / sitting / standing
 
-        self.panel = CorrectorPanel(self)
+        self.memory = MemoryStore(MEMORY_DB)
+        self.fixer = CorrectorPanel(self)
+        self.chat = AssistantPanel(self, self.make_agent)
         self.bubble = Bubble()
         self.card = MeetingCard(self)
         self.notifier = Notifier(self)
@@ -110,7 +117,7 @@ class Buddy(QWidget):
         self.timer = QTimer(self, timeout=self.tick)
         self.timer.start(int(1000 / FPS))
         self.move(int(self.fx), int(self.fy))
-        after(self, 800, lambda: self.say("Hi! Click me to fix your text ✨", 4500))
+        after(self, 800, lambda: self.say("Hi! Click me and ask me anything ✨", 4500))
 
     # ---- placement ------------------------------------------------------------
     def update_geometry(self, initial=False):
@@ -200,6 +207,8 @@ class Buddy(QWidget):
         for reminder in self.schedule.due(datetime.now(UTC), self.events,
                                           self.wellness and here):
             self.deliver(reminder)
+        for reminder in self.memory.take_due(datetime.now(UTC)):
+            self.deliver_own(reminder)
         if self.pending and not self.busy and not self.bubble.isVisible():
             self.say(self.pending.popleft(), 20000)
             self.wave(6)
@@ -224,6 +233,17 @@ class Buddy(QWidget):
         else:
             self.notifier.notify("💧 Time for a break", WELLNESS_TEXT, "wellness")
             self.pending.append(reminder.text)
+
+    def deliver_own(self, reminder):
+        """A reminder the assistant set for you ("remind me after the 3 pm meeting…")."""
+        self.stand_up()
+        self.notifier.notify("⏰ Reminder", reminder.text, "meeting", f"reminder-{reminder.id}",
+                             [("dismiss", "Got it")])
+        self.say(f"⏰ {reminder.text}", 30000)
+        self.wave(8)
+
+    def make_agent(self):
+        return Agent(ToolBox(self.memory, lambda: self.events))
 
     def outlook_url(self):
         return outlook_web_url(self.settings.value("calendar_url", ""))
@@ -456,12 +476,13 @@ class Buddy(QWidget):
             if self.fy >= self.floor_y:
                 self.say("Wheee!", 1500)
         elif self._press is not None:
-            self.open_panel()
+            self.open_chat()
         self._press = None
 
     def contextMenuEvent(self, e):
         menu = QMenu(self)
-        menu.addAction("✍️  Fix text…", self.open_panel)
+        menu.addAction("💬  Ask Buddy…", self.open_chat)
+        menu.addAction("✍️  Fix text…", self.open_fixer)
         menu.addAction("▶  Resume walking" if self.paused else "⏸  Stay here", self.toggle_pause)
         dock = menu.addAction("Keep on right side", self.toggle_dock)
         dock.setCheckable(True); dock.setChecked(self.docked)
@@ -498,7 +519,7 @@ class Buddy(QWidget):
 
     def quit_safely(self):
         if ((self.calendar_worker and self.calendar_worker.isRunning()) or
-                (self.panel.worker and self.panel.worker.isRunning())):
+                any(p.worker and p.worker.isRunning() for p in (self.fixer, self.chat))):
             self.say("Finishing the current request before closing…", 3000)
             after(self, 500, self.quit_safely)
             return
@@ -508,10 +529,15 @@ class Buddy(QWidget):
         self.paused = not self.paused
         self.say("Okay, I'll wait here." if self.paused else "Let's go!", 1800)
 
-    def open_panel(self):
+    def open_chat(self):
         self.busy = True
         self.bubble.hide()
-        self.panel.show_near(self)
+        self.chat.show_near(self)
+
+    def open_fixer(self):
+        self.busy = True
+        self.bubble.hide()
+        self.fixer.show_near(self)
 
     def panel_closed(self):
         self.busy = False
