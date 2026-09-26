@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QT
 
 from ..services import agent as agent_mod
 from ..services.launcher import open_request
+from ..services.whatsapp import is_no, is_yes
 from .styles import CHAT_CSS
 
 # who -> (background, label, pushed to the right)
@@ -116,6 +117,9 @@ class AssistantPanel(QWidget):
         be asked right now."""
         if self.busy:
             return False
+        if self.buddy.draft_card.draft and (is_yes(text) or is_no(text)):
+            self._add("you", ("🎤 " if spoken else "") + text)     # the answer to "Send it?"
+            return self.buddy.answer_draft(is_yes(text), spoken)
         if self.quick_open(text, spoken):
             return True
         if not agent_mod.available():
@@ -195,6 +199,12 @@ class AssistantPanel(QWidget):
         gap = '<td width="18%"></td>'
         row = gap + cell if gap_left else cell + gap
         return f'<table width="100%" cellspacing="4" cellpadding="0"><tr>{row}</tr></table>'
+
+    def note(self, text):
+        """Something that happened outside the conversation (a message went out)."""
+        self._add("buddy", text)
+        if self.agent is not None:
+            self.agent.note(text)
 
     def _add(self, who, text):
         self._html.append(self._bubble(who, text))

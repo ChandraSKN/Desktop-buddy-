@@ -56,6 +56,7 @@ from .meeting_card import MeetingCard
 from .minutes_bar import MinutesBar
 from .timers import after
 from .voice import ListenerThread, Speaker
+from .whatsapp import DraftCard, LinkDialog, WhatsAppLink
 
 
 class Buddy(QWidget):
@@ -99,6 +100,15 @@ class Buddy(QWidget):
 
         self.memory = MemoryStore(MEMORY_DB)
         self.launcher = Launcher()
+        self.whatsapp = WhatsAppLink(self)
+        self.whatsapp.draft_ready.connect(self.on_draft)
+        self.whatsapp.sent.connect(self.on_sent)
+        self.whatsapp.state_changed.connect(lambda state: print(f"whatsapp: {state}", flush=True))
+        self.draft_card = DraftCard(self)
+        self.draft_by_voice = False
+        self.link_dialog = None
+        if self.whatsapp.linked:
+            after(self, 4000, self.whatsapp.start)
         self.fixer = CorrectorPanel(self)
         self.chat = AssistantPanel(self, self.make_agent)
         self.minutes = MinutesBar(self, self.memory)
@@ -277,7 +287,8 @@ class Buddy(QWidget):
         self.wave(8)
 
     def make_agent(self):
-        return Agent(ToolBox(self.memory, lambda: self.events, launcher=self.launcher))
+        return Agent(ToolBox(self.memory, lambda: self.events, launcher=self.launcher,
+                             whatsapp=self.whatsapp))
 
     def outlook_url(self):
         return outlook_web_url(self.settings.value("calendar_url", ""))
@@ -364,7 +375,7 @@ class Buddy(QWidget):
 
     def on_heard(self, text, language="en"):
         self.stand_up()
-        if is_goodbye(text):                 # "thanks" / "that's all" ends the conversation
+        if is_goodbye(text) and not self.draft_card.draft:   # "thanks" ends the conversation
             self.say("👍", 2000)
             return
         self.say(f"🎤 “{text}”", 20000)
@@ -415,6 +426,52 @@ class Buddy(QWidget):
         if not self.speak:
             self.speaker.stop()
 
+    # ---- WhatsApp -----------------------------------------------------------------
+    def link_whatsapp(self):
+        self.link_dialog = LinkDialog(self.whatsapp)
+        self.link_dialog.show()
+        self.whatsapp.start()
+
+    def unlink_whatsapp(self):
+        self.answer_draft(False)
+        self.whatsapp.unlink()
+        self.say("WhatsApp unlinked.", 3000)
+
+    def on_draft(self, draft):
+        """The assistant wrote a message; it waits on the card for a yes."""
+        self.stand_up()
+        self.draft_by_voice = self.chat.spoken
+        self.draft_card.show_draft(draft)
+
+    def answer_draft(self, yes, spoken=False):
+        """Send / Cancel on the card, or "yes" / "no" said or typed while it's up."""
+        draft = self.draft_card.draft
+        if draft is None:
+            return False
+        self.draft_by_voice = spoken
+        if yes:
+            self.draft_card.sending()
+            self.whatsapp.send(draft)
+        else:
+            self.draft_card.hide_card()
+            self._tell("Okay, I won't send it.")
+        return True
+
+    def on_sent(self, draft, ok, error):
+        if self.draft_card.draft == draft:
+            self.draft_card.hide_card()
+        name = draft.contact.name.split()[0]
+        self._tell(f"✔ Sent to {name}." if ok else f"I couldn't send it to {name}: {error}")
+        self.chat.note(f"✔ Sent to {draft.contact.name}: {draft.text}" if ok
+                       else f"Not sent to {draft.contact.name}: {error}")
+
+    def _tell(self, text):
+        """A short answer, out loud as well if the question was spoken."""
+        if self.draft_by_voice:
+            self.voice_reply(text)
+        else:
+            self.say(text, 4000)
+
     def join_meeting(self, event):
         """Open the meeting's link, stop reminding about it, and offer to take minutes."""
         QDesktopServices.openUrl(QUrl(event.url))
@@ -431,7 +488,7 @@ class Buddy(QWidget):
 
     def stack_top(self):
         """Top edge of whatever floats above Buddy (card, minutes bar), for the bubble."""
-        tops = [w.y() for w in (self.card, self.minutes) if w.isVisible()]
+        tops = [w.y() for w in (self.card, self.minutes, self.draft_card) if w.isVisible()]
         return min(tops) if tops else self.y() + 10
 
     def acknowledge(self, key):
@@ -580,6 +637,7 @@ class Buddy(QWidget):
         self.bubble.follow(self)
         self.card.follow(self)
         self.minutes.follow(self)
+        self.draft_card.follow(self)
         self.update()
 
     # ---- painting -------------------------------------------------------------
@@ -676,6 +734,15 @@ class Buddy(QWidget):
         voice = menu.addAction("Voice: " + self.voice_state)
         voice.setEnabled(False)
         menu.addSeparator()
+        if self.whatsapp.state == "not linked":
+            menu.addAction("💬  Link WhatsApp…", self.link_whatsapp)
+        else:
+            wa = menu.addAction("WhatsApp: " + self.whatsapp.state)
+            wa.setEnabled(False)
+            if self.whatsapp.state in ("stopped", "linking"):
+                menu.addAction("💬  Reconnect WhatsApp…", self.link_whatsapp)
+            menu.addAction("Unlink WhatsApp", self.unlink_whatsapp)
+        menu.addSeparator()
         wellness = menu.addAction("Hourly water + movement reminders", self.toggle_wellness)
         wellness.setCheckable(True); wellness.setChecked(self.wellness)
         menu.addAction("Preview wellness reminder", self.preview_reminder)
@@ -725,6 +792,7 @@ class Buddy(QWidget):
             after(self, 500, self.quit_safely)
             return
         self.minutes.shutdown()         # finishes the audio; minutes resume at the next start
+        self.whatsapp.stop()
         self.speaker.stop()
         if self.listener.isRunning():
             self.listener.stop()

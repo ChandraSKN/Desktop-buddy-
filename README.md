@@ -147,6 +147,10 @@ bubble; the exchange also appears in the chat. Click him to interrupt. Push-to-t
 🎤 button in the chat, or right-click → **Talk to Buddy**. Right-click toggles **Listen for
 "Hey Buddy"** and **Speak replies**.
 
+**Follow-ups don't need "Hey Buddy".** After he answers, he keeps listening for 10 seconds
+(**👂 Anything else?**), so you can just ask the next thing. Say "thanks" or "that's all",
+or stay quiet, to end the conversation.
+
 Everything runs on this computer; nothing is sent anywhere until you've said the wake
 phrase, and then only the transcribed words go to Claude.
 
@@ -184,6 +188,31 @@ Ask in the chat or by voice: *"Hey Buddy, open Firefox"*, *"open the calculator"
 arbitrary command), folders inside your home directory (no `../`, symlinks out, or
 system folders), and http(s) addresses. Apps start in their own systemd scope, as if
 opened from the dock, so they keep running when Buddy restarts.
+
+## WhatsApp messages
+
+*"Hey Buddy, message Ravi that I'm running 10 minutes late"*, or, after talking about
+someone, just *"message him that I'll call back"*. Buddy finds the contact, writes the
+message, and shows it on a card above him: **Send** / **Cancel**, or say **"yes"** / **"no"**
+(typing yes/no in the chat works too). Nothing goes out until you confirm.
+
+**Linking (once):** right-click Buddy → **Link WhatsApp…**, then on your phone open
+WhatsApp → Settings → **Linked devices** → **Link a device** and scan the code. Buddy
+appears there as a linked device, like WhatsApp Web; **Unlink WhatsApp** in the menu (or
+removing it on the phone) logs it out.
+
+- **How:** a helper process (`services/whatsapp_worker.py`, using
+  [neonize](https://github.com/krypton-byte/neonize)/whatsmeow) holds the linked-device
+  session in `~/.local/share/desktop-buddy/whatsapp.db` and gets your contact names from the
+  phone. It's a separate process so it can always be stopped, and a crash in it can't take
+  Buddy down.
+- **Safety:** the assistant has only `find_whatsapp_contact` and `draft_whatsapp_message`:
+  it can draft, never send. Contacts reach it as short keys, not numbers, so it can't
+  message a number it made up. Buddy doesn't read your chats.
+- **Caveat:** this is an unofficial WhatsApp client. WhatsApp doesn't offer an official
+  way to automate a personal account; accounts that send a lot of automated messages can be
+  flagged. Occasional messages you confirm yourself look like normal use.
+- Contacts only (no groups yet). Right after linking, contacts take a minute to sync.
 
 ## Telugu
 
@@ -355,6 +384,7 @@ flowchart LR
         W --> AP[AssistantPanel<br/>chat, streaming]
         W --> V[voice<br/>ListenerThread, Speaker]
         W --> CS[CommandServer<br/>local socket]
+        W --> WA[whatsapp<br/>WhatsAppLink, DraftCard]
     end
     subgraph character[deskbuddy/character]
         CH[chair.ChairScene<br/>sit/stand timing] --> M3[model3d<br/>sprite playback]
@@ -372,7 +402,8 @@ flowchart LR
         SP[speech<br/>Piper, mouth levels]
         BR[briefing<br/>related minutes → brief]
         CH[claude_hooks<br/>hook JSON → message]
-        T[agent_tools<br/>8 validated tools]
+        T[agent_tools<br/>validated tools]
+        WW[whatsapp_worker<br/>linked device, subprocess]
         MEM[(memory<br/>SQLite + FTS5)]
     end
     W --> CH
@@ -386,6 +417,7 @@ flowchart LR
     MIN --> MEM
     V --> L & SP
     V -. heard .-> AP
+    T -. draft .-> WA --> WW
     W --> BR --> MEM
     CLI[buddy CLI / Claude Code hook] --> CH -. socket .-> CS
     BL[(blender/*.py<br/>headless renders)] -. frames + manifest .-> M3
