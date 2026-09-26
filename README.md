@@ -165,6 +165,37 @@ phrase, and then only the transcribed words go to Claude.
 - **Cost:** ~550 MB of memory with the speech models loaded, ~5% of one core while idle.
   Turning listening off frees the CPU.
 
+## Meeting briefings
+
+With a meeting's first reminder (10 minutes before), Buddy looks for anything related he
+already knows: minutes of earlier meetings with a similar title (recurring meetings keep
+their name; generic words like "weekly" or "sync" don't count) and facts you asked him to
+remember. If there's something, Claude writes one or two sentences, shown on the meeting
+card (💡) and spoken if replies are on, e.g. *"Last time you promised Ravi the export fix
+by Wednesday."* If there's nothing related, there's no briefing and no Claude call.
+Right-click → **Brief me before meetings** turns it off.
+
+## Claude Code and the `buddy` command
+
+Other programs can talk to Buddy through a local socket (`$XDG_RUNTIME_DIR/desktop-buddy.sock`,
+owner-only). `setup.sh` installs the `buddy` command:
+
+```bash
+buddy say "Build finished"          # bubble + wave
+buddy say --speak "Tests passed"    # …and say it
+buddy status                        # JSON: state, voice, minutes, idle time
+make test && buddy say "tests passed" || buddy say --speak "tests FAILED"
+```
+
+**Claude Code hooks** (in `~/.claude/settings.json`: `UserPromptSubmit`, `Stop` and
+`Notification` all run `buddy claude-hook`) make Buddy wave and notify you when a Claude
+Code task that took a minute or more finishes (*"✅ Claude Code finished · desktop-buddy:
+done after 4 min"*), and whenever Claude Code is waiting for your permission or input.
+He says it out loud only if you haven't touched the keyboard or mouse for 20 seconds
+(you're not looking) and you're not on a call. The hook always exits 0 in ~30 ms, and does
+nothing if Buddy isn't running, so it can't slow down or break Claude Code. Change the
+threshold with `BUDDY_CLAUDE_LONG_TASK` (seconds); remove the hooks with `/hooks`.
+
 ## Minutes of meeting
 
 When you join a meeting through Buddy (the card's or notification's **Join**, the meetings
@@ -275,6 +306,7 @@ flowchart LR
         W --> CP[CorrectorPanel]
         W --> AP[AssistantPanel<br/>chat, streaming]
         W --> V[voice<br/>ListenerThread, Speaker]
+        W --> CS[CommandServer<br/>local socket]
     end
     subgraph character[deskbuddy/character]
         CH[chair.ChairScene<br/>sit/stand timing] --> M3[model3d<br/>sprite playback]
@@ -290,6 +322,8 @@ flowchart LR
         MIN[minutes<br/>Claude structured output]
         L[listener<br/>endpointing, wake phrase]
         SP[speech<br/>Piper, mouth levels]
+        BR[briefing<br/>related minutes → brief]
+        CH[claude_hooks<br/>hook JSON → message]
         T[agent_tools<br/>8 validated tools]
         MEM[(memory<br/>SQLite + FTS5)]
     end
@@ -304,6 +338,8 @@ flowchart LR
     MIN --> MEM
     V --> L & SP
     V -. heard .-> AP
+    W --> BR --> MEM
+    CLI[buddy CLI / Claude Code hook] --> CH -. socket .-> CS
     BL[(blender/*.py<br/>headless renders)] -. frames + manifest .-> M3
 ```
 
@@ -333,9 +369,12 @@ deskbuddy/
   character/              model3d.py (drawing), chair.py (sit/stand sequence)
   services/               reminders, notifier, idle, corrector,
                           agent, agent_tools, memory, recorder, transcribe,
-                          minutes, listener, speech (no widgets)
-  ui/                     buddy_window, assistant_panel, minutes_bar, voice, bubble,
-                          meeting_card, corrector_panel, styles
+                          minutes, listener, speech, briefing, claude_hooks
+                          (no widgets)
+  ipc.py, cli.py          the local socket protocol and the `buddy` command
+  ui/                     buddy_window, assistant_panel, minutes_bar, voice,
+                          command_server, bubble, meeting_card, corrector_panel, styles
+bin/buddy                 launcher for the `buddy` command
 blender/                  model build + render + pack scripts, buddy_model.blend
 tests/                    pytest; test_window.py drives the real window off-screen
 ```
@@ -343,7 +382,7 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 97 tests, ~9 s, no display, mic or network
+.venv/bin/pytest                                # 112 tests, ~9 s, no display, mic or network
 systemctl --user kill --kill-whom=main -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```
@@ -363,6 +402,9 @@ resuming unfinished recordings, too-little-speech). Voice: wake-phrase variants 
 non-wake speech, endpointing on synthetic audio (a noisy room, clicks), wake-then-command
 timing, push-to-talk, speech text cleanup, mouth levels, real Piper output when installed,
 and in the window: heard speech → assistant → spoken reply, standing still with the
-talking mouth, and turning speech off.
+talking mouth, and turning speech off. Copilot: hook timing per session (short tasks
+stay quiet), path-safe session ids, junk input, the `buddy` command with Buddy down, say /
+Claude / status messages over the real socket, related-minutes gathering, generic titles,
+"NONE" briefs, and the briefing appearing on the meeting card once.
 
 Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.

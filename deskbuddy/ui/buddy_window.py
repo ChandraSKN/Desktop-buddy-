@@ -8,7 +8,7 @@ import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
 
-from PyQt6.QtCore import QPoint, QSettings, Qt, QTimer, QUrl
+from PyQt6.QtCore import QPoint, QSettings, Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QBitmap, QDesktopServices, QGuiApplication, QImage, QPainter, QRegion
 from PyQt6.QtWidgets import QApplication, QInputDialog, QLineEdit, QMenu, QMessageBox, QWidget
 
@@ -29,6 +29,8 @@ from ..config import (
 )
 from ..services.agent import Agent
 from ..services.agent_tools import ToolBox
+from ..services.briefing import gather, write_brief
+from ..services.claude_hooks import describe as describe_claude
 from ..services.idle import IdleMonitor
 from ..services.memory import MemoryStore
 from ..services.notifier import Notifier
@@ -46,6 +48,7 @@ from ..services.reminders import (
 )
 from .assistant_panel import AssistantPanel
 from .bubble import Bubble
+from .command_server import CommandServer
 from .corrector_panel import CorrectorPanel
 from .meeting_card import MeetingCard
 from .minutes_bar import MinutesBar
@@ -104,6 +107,12 @@ class Buddy(QWidget):
         self.listener.wake.connect(self.on_wake)
         self.listener.heard.connect(self.on_heard)
         self.listener.status.connect(self._voice_status)
+        self.brief = self.settings.value("meeting_brief", True, type=bool)
+        self.briefed, self.brief_workers = set(), []
+        self.commands = CommandServer(self)
+        self.commands.command.connect(self.handle_command)
+        if not self.commands.start():
+            print("command socket unavailable: buddy/Claude Code messages won't arrive", flush=True)
         if self.listen and VOICE:
             after(self, 2500, self.listener.start)
         after(self, 3000, self.minutes.resume_pending)
@@ -247,6 +256,7 @@ class Buddy(QWidget):
                 actions = [("outlook", "Open in Outlook"), ("dismiss", "Dismiss")]
             self.notifier.notify(f"📅 {ev.title}", body, "meeting", ev.key, actions)
             self.card.show_event(ev)
+            self.start_brief(ev)
             self.wave(12)
         else:
             self.notifier.notify("💧 Time for a break", WELLNESS_TEXT, "wellness")
@@ -276,6 +286,57 @@ class Buddy(QWidget):
             QDesktopServices.openUrl(QUrl(self.outlook_url()))
         if action in ("join", "outlook", "dismiss"):
             self.acknowledge(key)
+
+    # ---- messages from other programs (`buddy` command, Claude Code hooks) ----------
+    def handle_command(self, message, reply):
+        cmd = message["cmd"]
+        if cmd == "status":
+            reply(self.status())
+        elif cmd == "say" and str(message.get("text", "")).strip():
+            text = str(message["text"])[:500]
+            self.stand_up()
+            self.say(text, max(4000, 60 * len(text)))
+            self.wave(3)
+            if message.get("speak") and self.speak:
+                self.speaker.say(text)
+        elif cmd == "claude" and message.get("kind") in ("done", "attention"):
+            title, body = describe_claude(message)
+            self.notifier.notify(title, body, "wellness", f"claude-{message.get('project')}")
+            self.stand_up()
+            self.say(f"{title}\n{body}", 10000)
+            self.wave(4)
+            if self.speak and self.idle.idle_seconds >= 20 and not self.on_call():
+                self.speaker.say("Claude Code is done." if message["kind"] == "done"
+                                 else "Claude Code needs you.")
+
+    def on_call(self):
+        return self.voice_state == "paused: on a call" or self.minutes.recorder.recording
+
+    def status(self):
+        return {"state": self.state, "chair": self.chair and self.chair.phase, "voice": self.voice_state,
+                "speaking": self.speaker.speaking, "recording_minutes": self.minutes.recorder.recording,
+                "you_idle_seconds": round(self.idle.idle_seconds), "away": self.idle.tracker.away,
+                "meetings_known": len(self.events)}
+
+    # ---- briefing before meetings --------------------------------------------------
+    def start_brief(self, event):
+        if not self.brief or event.key in self.briefed or event.key == "preview":
+            return
+        self.briefed.add(event.key)
+        worker = BriefWorker(event, self.memory)
+        worker.ready.connect(self.brief_ready)
+        worker.finished.connect(lambda w=worker: self.brief_workers.remove(w))
+        self.brief_workers.append(worker)
+        worker.start()
+
+    def brief_ready(self, key, text):
+        self.card.set_brief(key, text)
+        if self.speak and not self.on_call():
+            self.speaker.say(text)
+
+    def toggle_brief(self):
+        self.brief = not self.brief
+        self.settings.setValue("meeting_brief", self.brief)
 
     # ---- voice ------------------------------------------------------------------
     def _voice_status(self, state):
@@ -610,6 +671,8 @@ class Buddy(QWidget):
             menu.addAction("⏹  Stop minutes", self.minutes.stop)
         else:
             menu.addAction("📝  Take minutes now", self.start_minutes_now)
+        brief = menu.addAction("Brief me before meetings", self.toggle_brief)
+        brief.setCheckable(True); brief.setChecked(self.brief)
         menu.addAction("Preview meeting reminder", self.preview_meeting)
         menu.addAction("Connect Outlook calendar…", self.configure_outlook)
         menu.addAction("Sync calendar now", self.sync_calendar)
@@ -654,4 +717,26 @@ class Buddy(QWidget):
         self.busy = False
         self.state, self.state_until = "idle", time.monotonic() + 1.5
 
+
+class BriefWorker(QThread):
+    """Gather notes and ask Claude for a briefing, off the UI thread."""
+
+    ready = pyqtSignal(str, str)         # meeting key, briefing
+
+    def __init__(self, event, memory):
+        super().__init__()
+        self.event, self.memory = event, memory
+
+    def run(self):
+        from ..services import agent as agent_mod
+        notes = gather(self.event, self.memory)
+        if not notes or not agent_mod.available():
+            return
+        try:
+            text = write_brief(self.event, notes)
+        except Exception as exc:          # a missing brief is fine; just log why
+            print(f"briefing failed: {agent_mod.friendly_error(exc)}", flush=True)
+            return
+        if text:
+            self.ready.emit(self.event.key, text)
 

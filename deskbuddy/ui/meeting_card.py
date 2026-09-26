@@ -38,7 +38,9 @@ class MeetingCard(QWidget):
         self.link = QLabel(objectName="link", openExternalLinks=True,
                            textInteractionFlags=Qt.TextInteractionFlag.TextBrowserInteraction)
         self.nolink = QLabel("No meeting link in this invite.", objectName="nolink")
-        for w in (self.when, self.title, self.time, self.link, self.nolink):
+        self.brief = QLabel(objectName="brief", wordWrap=True)
+        self.brief.hide()
+        for w in (self.when, self.title, self.time, self.link, self.nolink, self.brief):
             lay.addWidget(w)
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 0)
@@ -53,6 +55,8 @@ class MeetingCard(QWidget):
         self._tick = QTimer(self, timeout=self.refresh)
 
     def show_event(self, event):
+        if self.event is None or self.event.key != event.key:
+            self.brief.hide()
         self.event = event
         has_link = bool(event.url)
         self.join.setText("Join meeting" if has_link else "Open in Outlook")
@@ -106,6 +110,14 @@ class MeetingCard(QWidget):
             self.buddy.acknowledge(self.event.key)
         else:
             self.hide_card()
+
+    def set_brief(self, key, text):
+        """A briefing arrived for meeting key; show it if that meeting's card is up."""
+        if self.event and self.event.key == key:
+            self.brief.setText("💡 " + text)
+            self.brief.show()
+            self.adjustSize()
+            self.follow(self.buddy)
 
     def hide_card(self):
         self._tick.stop()

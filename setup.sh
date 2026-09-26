@@ -26,6 +26,11 @@ DESKTOP
 mkdir -p ~/.local/share/applications
 cp desktop-buddy.desktop ~/.local/share/applications/
 
+echo "==> Installing the 'buddy' command (~/.local/bin/buddy)"
+chmod +x bin/buddy
+mkdir -p ~/.local/bin
+ln -sf "$DIR/bin/buddy" ~/.local/bin/buddy
+
 if [ "$1" = "--autostart" ]; then
     # Background service: starts at every login, restarts itself if it ever crashes.
     echo "==> Installing background service (starts at login)"

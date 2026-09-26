@@ -1,0 +1,4 @@
+#!/bin/bash
+# `buddy say "…"`, `buddy status`, `buddy claude-hook`: see deskbuddy/cli.py.
+DIR="$(dirname "$(readlink -f "$0")")/.."
+PYTHONPATH="$DIR" exec "$DIR/.venv/bin/python" -m deskbuddy.cli "$@"

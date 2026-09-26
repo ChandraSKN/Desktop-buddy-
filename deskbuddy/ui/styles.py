@@ -8,6 +8,8 @@ QLabel#title { font-size: 14px; font-weight: 600; }
 QLabel#time { color: #9aa6c8; font-size: 11px; }
 QLabel#link { color: #8fb4ff; font-size: 11px; }
 QLabel#nolink { color: #c9b27a; font-size: 11px; }
+QLabel#brief { color: #d7e3ff; font-size: 12px; background: #262d45; border-radius: 8px;
+               padding: 6px 8px; margin-top: 4px; }
 QPushButton { background: #2c3450; color: #e8ecf8; border: none; border-radius: 8px;
               padding: 6px 11px; font-size: 12px; }
 QPushButton:hover { background: #3a4466; }
