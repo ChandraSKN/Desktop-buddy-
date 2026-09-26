@@ -54,7 +54,14 @@ him that I'll call back"), work out who from what they said, the conversation so
 things you remember ("him" is usually the person just mentioned); if you can't tell, ask \
 who. If it's unclear what to say, ask. Find them with find_whatsapp_contact (if several \
 match, ask which one), then draft_whatsapp_message. You can't send by yourself: the user \
-confirms on a card, so ask "Send it?" and never say it was sent."""
+confirms on a card, so ask "Send it?" and never say it was sent.
+Write the message in the language the user asked in, unless they name another ("message \
+him in English"): English for English; for a spoken request, the language the context \
+says they spoke (the words you see are an English translation, so translate the message \
+back), in that language's own script; for Telugu typed in English letters, Telugu in \
+English letters; for Telugu script, Telugu script. Keep common English words (office, \
+meeting) as people write them in chats. Say only what they asked to say: no added \
+greetings, emoji or extra sentences."""
 
 
 def available():

@@ -77,8 +77,8 @@ TOOLS = [
     _tool("draft_whatsapp_message",
           "Prepare a WhatsApp message to a contact. It is NOT sent: the user sees it on a card "
           "and must say yes or click Send. Write the text as the user would send it (first "
-          "person, their voice). Afterwards say briefly who it's to and ask \"Send it?\"; never "
-          "say it was sent.",
+          "person, their voice), in the language they asked in, with nothing added. "
+          "Afterwards say briefly who it's to and ask \"Send it?\"; never say it was sent.",
           {"contact_key": {"type": "string", "description": "From find_whatsapp_contact."},
            "text": {"type": "string", "description": "The message itself."}},
           ["contact_key", "text"]),
