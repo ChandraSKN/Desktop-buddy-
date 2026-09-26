@@ -19,9 +19,9 @@ from .corrector import _api_key as api_key
 
 MODEL = "claude-opus-5"
 MAX_STEPS = 8          # tool rounds per user turn before giving up
-# what speech recognition may report; the user's languages are English and Telugu, and
-# Telugu audio is sometimes detected as a neighbouring language
-SPOKEN = {"te": "Telugu", "ta": "Telugu", "kn": "Telugu", "ml": "Telugu", "hi": "Hindi"}
+# The user speaks English and Telugu. Whisper often labels Telugu speech as Hindi, Tamil,
+# Kannada or Malayalam, so anything spoken that isn't English is taken as Telugu (Hindi is
+# off for now: a Telugu question answered in Hindi was the common failure).
 
 SYSTEM = f"""You are Buddy, a small animated companion who lives at the bottom of the user's \
 screen. You help with their day: meetings from their Outlook calendar, reminders, and \
@@ -35,7 +35,7 @@ The user speaks English and Telugu, often mixed. Reply in the language they used
 for English; for Telugu (in Telugu script, or Telugu typed in English letters like "meeting \
 eppudu"), reply in Telugu written in Telugu script, and write English words in Telugu \
 script too (మీటింగ్, రిమైండర్) so your voice can pronounce them. Names of apps and \
-meetings may stay as they are.
+meetings may stay as they are. Don't use Hindi unless they explicitly ask for it.
 
 Use tools rather than guessing: check get_meetings before talking about their schedule, and \
 call create_reminder when they ask to be reminded (for "after the X meeting", find its key \
@@ -136,10 +136,9 @@ class Agent:
                          "or two short sentences, no lists, no links. The words came from speech "
                          "recognition, so allow for misheard words.")
             if language != "en":
-                name = SPOKEN.get(language, "Telugu")
-                lines.append(f"They spoke {name}; the text is speech recognition's automatic English "
-                             "translation, so names and details may be wrong. Reply in "
-                             f"{'Telugu, in Telugu script' if name == 'Telugu' else name}.")
+                lines.append("They spoke Telugu; the text is speech recognition's automatic English "
+                             "translation, so names and details may be wrong. Reply in Telugu, in "
+                             "Telugu script, not Hindi.")
         facts = {m.id: m for m in self.toolbox.memory.recall(text, limit=5)}
         for m in self.toolbox.memory.recent(limit=3):
             facts.setdefault(m.id, m)

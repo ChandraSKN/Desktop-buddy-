@@ -144,3 +144,12 @@ def test_out_of_credits_reads_as_a_billing_problem():
     exc = anthropic.BadRequestError(
         "Your credit balance is too low to access the Anthropic API.", response=response, body=None)
     assert "out of credits" in friendly_error(exc)
+
+
+def test_speech_whisper_labels_hindi_or_tamil_is_answered_in_telugu():
+    for label in ("te", "hi", "ta", "kn"):
+        client = FakeClient(NS(stop_reason="end_turn", content=[text("సరే")]))
+        agent, _ = make(client)
+        agent.send("when is my next meeting?", spoken=True, language=label)
+        context = client.requests[0]["messages"][0]["content"][0]["text"]
+        assert "They spoke Telugu" in context and "Reply in Telugu" in context, label

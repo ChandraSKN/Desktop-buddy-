@@ -74,7 +74,7 @@ class ListenerThread(QThread):
 
         def command_text(audio):
             """English text of a command, and the language it was spoken in. English goes
-            through the fast model; Telugu/Hindi (or mixed, e.g. "Firefox open cheyyi") is
+            through the fast model; Telugu (or mixed, e.g. "Firefox open cheyyi") is
             translated to English by "small": on Telugu, "base" gives gibberish and "small"
             loops when writing Telugu script, but translates well (measured)."""
             text, language, confidence = text_of(full_model, audio, multilingual=True)
@@ -84,7 +84,7 @@ class ListenerThread(QThread):
             if not translator:
                 translator.append(WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=4))
             translated, _, _ = text_of(translator[0], audio, task="translate")
-            self.language = language if language != "en" else "te"
+            self.language = "te"                     # Hindi/Tamil/… labels are Telugu here
             return translated or text
 
         wake = WakeListener(lambda a: text_of(quick_model, a, language="en")[0], command_text)
