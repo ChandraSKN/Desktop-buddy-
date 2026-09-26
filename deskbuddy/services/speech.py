@@ -13,6 +13,7 @@ import numpy as np
 
 VOICES = Path.home() / ".local" / "share" / "desktop-buddy" / "voices"
 DEFAULT_VOICE = "en_US-ryan-medium"
+TELUGU_VOICE = "te_IN-venkatesh-medium"
 MOUTH_FPS = 25
 MOUTH_LEVELS = 4
 

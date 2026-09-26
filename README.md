@@ -185,6 +185,33 @@ arbitrary command), folders inside your home directory (no `../`, symlinks out, 
 system folders), and http(s) addresses. Apps start in their own systemd scope, as if
 opened from the dock, so they keep running when Buddy restarts.
 
+## Telugu
+
+Buddy understands Telugu, English, and the mix of the two, and answers Telugu in Telugu.
+
+- **Typing:** Telugu script or Telugu in English letters ("meeting eppudu?"): Claude reads
+  both and replies in Telugu script.
+- **Speaking:** the command's language is detected as it's transcribed. English goes
+  through the fast model as before; Telugu (or mixed, "Firefox open cheyyi") is translated
+  to English by Whisper `small` (~2.3 s, loaded on first use), and Claude is told you spoke
+  Telugu, that the text is a machine translation (names may be off), and to reply in
+  Telugu. Measured on Telugu speech: `base` produced gibberish; `small` got stuck
+  repeating when writing Telugu script but translated accurately; `large-v3-turbo`
+  mistook it for Tamil and took 10–16 s.
+- **His Telugu voice:** replies in Telugu script are spoken with Piper's
+  `te_IN-venkatesh-medium`; English replies keep the English voice. English words and
+  numbers inside a Telugu reply are pronounced too.
+- **Opening things:** "Firefox open cheyyi", "Downloads teruvu", "YouTube kholo", and in
+  Telugu script "ఫైర్‌ఫాక్స్ ఓపెన్ చెయ్యి": names written in Telugu script are matched to
+  apps and folders by sound (ఫైర్‌ఫాక్స్ → "phairphaaks" → consonants "frfks" = Firefox).
+- **Minutes:** in a mostly-English meeting, Telugu parts come out in English letters
+  ("Ravi export bugs Budawaram lopu fix chesthadu"), which keeps names and Claude reads
+  well. Stretches Whisper writes in another script, or gets stuck on, are re-run as English
+  translations and marked "(translated)" instead of being dropped.
+
+*Tested with Piper's synthetic Telugu voice; a real speaker's accent may be recognized
+better or worse.*
+
 ## Meeting briefings
 
 With a meeting's first reminder (10 minutes before), Buddy looks for anything related he
@@ -403,7 +430,7 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 137 tests, ~9 s, no display, mic or network
+.venv/bin/pytest                                # 163 tests, ~9 s, no display, mic or network
 systemctl --user kill --kill-whom=main -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```

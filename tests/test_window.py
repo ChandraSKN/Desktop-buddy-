@@ -79,7 +79,7 @@ def test_chat_streams_a_reply_from_the_agent(buddy, qtbot, monkeypatch):
     from deskbuddy.services import agent as agent_mod
 
     class FakeAgent:
-        def send(self, text, on_text, on_action, spoken=False):
+        def send(self, text, on_text, on_action, spoken=False, language="en"):
             on_text("Your next meeting ")
             on_text("is at 15:00.")
             return "Your next meeting is at 15:00."
@@ -105,7 +105,7 @@ def test_heard_speech_goes_to_the_assistant_and_the_reply_is_spoken(buddy, qtbot
     from deskbuddy.services import agent as agent_mod
 
     class FakeAgent:
-        def send(self, text, on_text, on_action, spoken=False):
+        def send(self, text, on_text, on_action, spoken=False, language="en"):
             assert spoken
             return f"You asked: {text}"
 

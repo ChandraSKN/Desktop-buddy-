@@ -18,6 +18,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .telugu import has_telugu, sound_key
+
 HOME = Path.home()
 DATA_DIRS = [HOME / ".local/share", *(Path(p) for p in os.environ.get(
     "XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":") if p),
@@ -108,8 +110,19 @@ def score(query, app):
     return max(best, fuzzy * 0.9)
 
 
+def match_by_sound(query, names):
+    """The name whose consonant skeleton equals query's (Telugu-script names), or None."""
+    key = sound_key(query)
+    return next((n for n in names if len(key) >= 2 and sound_key(n) == key), None)
+
+
 def match_app(query, apps, threshold=0.75):
     """(app, score) for the best match, or (None, best score) if nothing is good enough."""
+    if has_telugu(query):
+        by_name = {a.name: a for a in apps}
+        by_name.update({a.id.split(".")[-1]: a for a in apps})
+        hit = match_by_sound(query, by_name)
+        return (by_name[hit], 0.9) if hit else (None, 0.0)
     q = clean(query)
     if not q:
         return None, 0.0
@@ -204,6 +217,8 @@ class Launcher:
     def open(self, what):
         """Open an app, folder or site named by what. Returns (ok, message), or
         (False, None) if nothing matched."""
+        if has_telugu(what):                        # డౌన్‌లోడ్స్ → downloads
+            what = match_by_sound(what, FOLDERS) or what
         folder = folder_path(what) if clean(what) in FOLDERS or "/" in what else None
         if folder:
             return self.open_folder(folder), f"Opening {folder.name or 'your home folder'}."
@@ -216,11 +231,25 @@ class Launcher:
         return False, None
 
 
-_OPEN = re.compile(r"^\s*(?:(?:hey|ok|okay)\s+buddy[,.!\s]*)?(?:please\s+|can you\s+|could you\s+)?"
-                   r"(open|launch|start|run)\s+(.+?)\s*(?:for me|please)?[.!?]*\s*$", re.I)
+_WAKE_PREFIX = r"^\s*(?:(?:hey|ok|okay)\s+buddy[,.!\s]*)?"
+_OPEN = re.compile(_WAKE_PREFIX + r"(?:please\s+|can you\s+|could you\s+)?"
+                   r"(?:open|launch|start|run)\s+(.+?)\s*(?:for me|please)?[.!?]*\s*$", re.I)
+# Telugu / Hindi word order, verb last, as it's usually typed or transcribed in Latin letters:
+# "firefox open cheyyi", "calculator teruvu", "youtube kholo", "downloads open karo"
+_OPEN_LAST = re.compile(_WAKE_PREFIX + r"(.+?)\s+(?:"
+                        r"open\s+(?:cheyyi|cheyi|chey|cheyyandi|cheyandi|cheyy|chesko|karo|kar do|kardo|kijiye)"
+                        r"|teruvu|teruvandi|tericheyyi|kholo|khol do|kholdo)\s*(?:please|plz)?[.!?]*\s*$", re.I)
+# the same in Telugu script: "ఫైర్‌ఫాక్స్ ఓపెన్ చెయ్యి", "కాలిక్యులేటర్ తెరువు"
+_OPEN_TELUGU = re.compile(r"^\s*(.+?)\s+(?:ఓపెన్\s*(?:చెయ్యి|చేయి|చెయ్|చేయండి|చెయ్యండి)|తెరువు|తెరవండి|తెరిచి\s*పెట్టు)"
+                          r"\s*[.!?।]*\s*$")
 
 
 def open_request(text):
-    """"open firefox" → "firefox"; anything else → None."""
-    m = _OPEN.match(text)
-    return m.group(2) if m else None
+    """"open firefox" / "firefox open cheyyi" / "ఫైర్‌ఫాక్స్ ఓపెన్ చెయ్యి" → the thing to open;
+    anything else → None. Names in Telugu script still need matching to an app, which
+    Launcher.open does via its English translation when one is given."""
+    for pattern in (_OPEN, _OPEN_LAST, _OPEN_TELUGU):
+        m = pattern.match(text)
+        if m:
+            return m.group(1)
+    return None

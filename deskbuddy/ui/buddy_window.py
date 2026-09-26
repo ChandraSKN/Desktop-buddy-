@@ -357,10 +357,10 @@ class Buddy(QWidget):
         self.speaker.stop()
         self.say("👂 Yes?", 8000)
 
-    def on_heard(self, text):
+    def on_heard(self, text, language="en"):
         self.stand_up()
         self.say(f"🎤 “{text}”", 20000)
-        if not self.chat.ask(text, spoken=True):
+        if not self.chat.ask(text, spoken=True, language=language):
             self.voice_reply("Hang on, I'm still answering the last one.")
 
     def voice_reply(self, text):

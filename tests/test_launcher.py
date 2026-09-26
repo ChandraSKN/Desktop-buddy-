@@ -146,7 +146,7 @@ def test_unknown_app_goes_to_the_assistant(buddy, monkeypatch):
     asked = []
 
     class FakeAgent:
-        def send(self, text, on_text, on_action, spoken=False):
+        def send(self, text, on_text, on_action, spoken=False, language="en"):
             asked.append(text)
             return "Photoshop isn't installed. Want the website instead?"
 

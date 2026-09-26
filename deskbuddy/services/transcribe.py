@@ -11,6 +11,12 @@ The multilingual model handles Telugu/Hindi/English code-switching (language is 
 per segment). Without a headset your mic also hears the other people through the speakers,
 so a mic segment that repeats an overlapping "Others" segment is dropped as echo.
 
+Telugu: in a mostly-English meeting Whisper writes Telugu speech in English letters
+("Ravi export bugs Budawaram lopu fix chesthadu"), which keeps names and Claude reads well.
+When it decides a stretch *is* Telugu it either gets stuck repeating syllables in Telugu
+script or writes the sounds in another script (Devanagari); such a stretch is re-run as an
+English translation (marked "(translated)") instead of being dropped or kept unreadable.
+
 Decoding runs once per segment (temperature 0). Whisper's default retries at higher
 temperatures made a quiet, noisy mic track take 6x longer and then threw the result away;
 instead, a segment that fails Whisper's own quality limits is dropped here (looks_real)."""
@@ -32,6 +38,16 @@ def duration(path):
             return w.getnframes() / w.getframerate()
     except (OSError, EOFError, wave.Error):
         return 0.0
+
+
+def mostly_latin(text):
+    letters = [c for c in text if c.isalpha()]
+    return not letters or sum(c.isascii() for c in letters) / len(letters) >= 0.6
+
+
+def is_loop(seg):
+    """Stuck repeating (not silence): worth retrying as a translation."""
+    return seg.compression_ratio > 2.4 and seg.no_speech_prob <= 0.6
 
 
 def looks_real(seg):
@@ -71,8 +87,19 @@ def as_text(segments):
     return "\n".join(f"[{stamp(s['start'])}] {s['speaker']}: {s['text'].strip()}" for s in segments)
 
 
+def _translate(model, audio, start, end):
+    """English translation of audio[start:end] (seconds), or None."""
+    clip = audio[int(start * 16000):int(end * 16000)]
+    if len(clip) < 8000:
+        return None
+    segments, _ = model.transcribe(clip, task="translate", condition_on_previous_text=False, temperature=0.0)
+    text = " ".join(s.text.strip() for s in segments if looks_real(s))
+    return f"(translated) {text}" if text else None
+
+
 def transcribe_folder(folder, report=lambda p: None):
     from faster_whisper import WhisperModel
+    from faster_whisper.audio import decode_audio
 
     folder = Path(folder)
     files = [f for f in SPEAKERS if duration(folder / f) > 1.0]
@@ -80,14 +107,18 @@ def transcribe_folder(folder, report=lambda p: None):
     model = WhisperModel(MODEL, device="cpu", compute_type="int8", cpu_threads=THREADS)
     done, tracks = 0.0, {}
     for name in files:
-        segments, _ = model.transcribe(str(folder / name), vad_filter=True, multilingual=True,
+        audio = decode_audio(str(folder / name))
+        segments, _ = model.transcribe(audio, vad_filter=True, multilingual=True,
                                        condition_on_previous_text=False, temperature=0.0)
         out = []
         for seg in segments:
             report(min(0.99, (done + seg.end) / total))
-            if looks_real(seg):
+            text = seg.text.strip() if looks_real(seg) and mostly_latin(seg.text) else None
+            if text is None and (is_loop(seg) or looks_real(seg)):
+                text = _translate(model, audio, seg.start, seg.end)
+            if text:
                 out.append({"start": round(seg.start, 2), "end": round(seg.end, 2),
-                            "speaker": SPEAKERS[name], "text": seg.text.strip()})
+                            "speaker": SPEAKERS[name], "text": text})
         done += duration(folder / name)
         tracks[SPEAKERS[name]] = out
     result = merge(tracks)

@@ -22,14 +22,14 @@ class AgentWorker(QThread):
     done = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, agent, message, spoken=False):
+    def __init__(self, agent, message, spoken=False, language="en"):
         super().__init__()
-        self.agent, self.message, self.spoken = agent, message, spoken
+        self.agent, self.message, self.spoken, self.language = agent, message, spoken, language
 
     def run(self):
         try:
             self.done.emit(self.agent.send(self.message, self.text.emit, self.action.emit,
-                                           spoken=self.spoken))
+                                           spoken=self.spoken, language=self.language))
         except Exception as exc:            # shown in the panel; the app keeps running
             self.failed.emit(agent_mod.friendly_error(exc))
 
@@ -111,7 +111,7 @@ class AssistantPanel(QWidget):
     def busy(self):
         return bool(self.worker and self.worker.isRunning())
 
-    def ask(self, text, spoken=False):
+    def ask(self, text, spoken=False, language="en"):
         """Put a question to the assistant (typed, or heard by voice). False if it can't
         be asked right now."""
         if self.busy:
@@ -132,7 +132,7 @@ class AssistantPanel(QWidget):
         self._add("buddy", "…")
         self.send_btn.setEnabled(False)
         self.status.setText("Thinking…")
-        self.worker = AgentWorker(self.agent, text, spoken)
+        self.worker = AgentWorker(self.agent, text, spoken, language)
         self.worker.text.connect(self.on_text)
         self.worker.action.connect(self.buddy.open_meeting_link)
         self.worker.done.connect(self.on_done)

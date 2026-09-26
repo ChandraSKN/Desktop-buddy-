@@ -14,14 +14,15 @@ from PyQt6.QtCore import QObject, QProcess, QThread, pyqtSignal
 
 from ..services.listener import FRAME, RATE, Endpointer, WakeListener
 from ..services.recorder import ignore_debug_signal, other_apps_using_mic
-from ..services.speech import MOUTH_FPS, Voice, clean_for_speech
+from ..services.speech import MOUTH_FPS, TELUGU_VOICE, Voice, clean_for_speech
+from ..services.telugu import has_telugu
 
 CALL_CHECK_EVERY = 5.0
 
 
 class ListenerThread(QThread):
     wake = pyqtSignal()
-    heard = pyqtSignal(str)
+    heard = pyqtSignal(str, str)       # command text (English), language it was spoken in
     status = pyqtSignal(str)           # "loading", "listening", "paused: …", "error: …"
 
     def __init__(self):
@@ -30,6 +31,7 @@ class ListenerThread(QThread):
         self.hold = False              # set while Buddy speaks or records minutes
         self._stop = False
         self._push_to_talk = False
+        self.language = "en"           # of the last command
         self.proc = None
 
     # called from the UI thread
@@ -56,13 +58,30 @@ class ListenerThread(QThread):
             return
 
         def text_of(model, audio, **kw):
-            segments, _ = model.transcribe(audio, beam_size=1, temperature=0.0,
-                                           condition_on_previous_text=False, **kw)
-            return " ".join(s.text.strip() for s in segments
+            segments, info = model.transcribe(audio, beam_size=1, temperature=0.0,
+                                              condition_on_previous_text=False, **kw)
+            text = " ".join(s.text.strip() for s in segments
                             if s.no_speech_prob < 0.6 and s.compression_ratio < 2.4)
+            return text, info.language, info.language_probability
 
-        wake = WakeListener(lambda a: text_of(quick_model, a, language="en"),
-                            lambda a: text_of(full_model, a, multilingual=True))
+        translator = []                              # "small", loaded on first non-English command
+
+        def command_text(audio):
+            """English text of a command, and the language it was spoken in. English goes
+            through the fast model; Telugu/Hindi (or mixed, e.g. "Firefox open cheyyi") is
+            translated to English by "small": on Telugu, "base" gives gibberish and "small"
+            loops when writing Telugu script, but translates well (measured)."""
+            text, language, confidence = text_of(full_model, audio, multilingual=True)
+            if language == "en" and confidence >= 0.6:
+                self.language = "en"
+                return text
+            if not translator:
+                translator.append(WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=4))
+            translated, _, _ = text_of(translator[0], audio, task="translate")
+            self.language = language if language != "en" else "te"
+            return translated or text
+
+        wake = WakeListener(lambda a: text_of(quick_model, a, language="en")[0], command_text)
         vad = VadOptions(min_speech_duration_ms=250)
         failures = []
         while not self._stop:
@@ -114,7 +133,7 @@ class ListenerThread(QThread):
             if event == ("wake",):
                 self.wake.emit()
             elif event and event[0] == "command":
-                self.heard.emit(event[1])
+                self.heard.emit(event[1], self.language)
         if self.proc.poll() is None:
             self.proc.terminate()
             self.proc.wait(2)
@@ -144,7 +163,8 @@ class Speaker(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.voice = Voice()
+        self.voice = Voice()                         # English
+        self.telugu = Voice(TELUGU_VOICE)
         self.levels, self.start = [], 0.0
         self.proc = QProcess(self)
         self.proc.finished.connect(self._done)
@@ -159,12 +179,17 @@ class Speaker(QObject):
         return self.proc.state() != QProcess.ProcessState.NotRunning or (
             self.synth is not None and self.synth.isRunning())
 
+    def voice_for(self, text):
+        """Telugu script → the Telugu voice (if installed), otherwise English."""
+        return self.telugu if has_telugu(text) and self.telugu.available() else self.voice
+
     def say(self, text):
         text = clean_for_speech(text)
-        if not text or not self.available():
+        voice = self.voice_for(text)
+        if not text or not voice.available():
             return False
         self.stop()
-        self.synth = SynthThread(self.voice, text, self.dir / "reply.wav")
+        self.synth = SynthThread(voice, text, self.dir / "reply.wav")
         self.synth.ready.connect(self._play)
         self.synth.failed.connect(lambda _: self.finished.emit())
         self.started.emit()
