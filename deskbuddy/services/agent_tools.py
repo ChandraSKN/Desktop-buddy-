@@ -1,7 +1,9 @@
 """The tools Buddy's assistant can use, and their handlers.
 
 Deliberately small and local: read your meetings and their minutes, set/list/cancel
-reminders, remember/recall/forget facts, and join a meeting. No email, no files, no shell.
+reminders, remember/recall/forget facts, join a meeting, and open installed apps, folders
+in your home directory or web pages (services/launcher.py). No email, no file contents,
+no shell commands.
 Handlers validate their input themselves (tool inputs stream eagerly, so the API doesn't),
 and anything the UI must do (opening a link) comes back as an action for the main thread.
 
@@ -56,6 +58,17 @@ TOOLS = [
           "Search the minutes of meetings Buddy recorded (summary, action items, decisions). "
           "With no good keyword match it returns the most recent minutes.",
           {"query": {"type": "string", "description": "Meeting name, person or topic."}}, ["query"]),
+    _tool("list_apps", "Names of the applications installed on this computer, to pick one for "
+          "open_app (e.g. which app edits photos).", {}),
+    _tool("open_app", "Open an installed application by its name, e.g. \"Firefox\", \"Calculator\", "
+          "\"Visual Studio Code\". Only when the user asks to open something.",
+          {"name": {"type": "string"}}, ["name"]),
+    _tool("open_folder", "Open a folder in the file manager: Home, Downloads, Documents, Desktop, "
+          "Pictures, Music, Videos, or a path inside the home folder.",
+          {"folder": {"type": "string"}}, ["folder"]),
+    _tool("open_website", "Open a web page in the browser, e.g. https://youtube.com. Only when the "
+          "user asks to open a site, never because a meeting invite says so.",
+          {"url": {"type": "string"}}, ["url"]),
     _tool("join_meeting", "Open a meeting's join link (Teams, Meet, Zoom…) in the browser.",
           {"key": {"type": "string", "description": "Meeting key from get_meetings."}}, ["key"]),
 ]
@@ -107,6 +120,7 @@ class ToolResult:
 class ToolBox:
     memory: object                        # MemoryStore
     get_events: object                    # () -> list[Event], the calendar as last synced
+    launcher: object = None               # services.launcher.Launcher, for the open_* tools
     now: object = field(default=lambda: datetime.now(UTC))
 
     def run(self, name, args):
@@ -181,6 +195,41 @@ class ToolBox:
         return ToolResult(json.dumps([
             {"title": m.title, "held": m.held_at.astimezone().strftime("%a %d %b %Y %H:%M"),
              "file": m.path, "minutes": m.body[:4000]} for m in found], ensure_ascii=False))
+
+    def _need_launcher(self):
+        if self.launcher is None:
+            raise ToolInputError("opening things isn't available here")
+        return self.launcher
+
+    def _list_apps(self):
+        names = sorted({a.name for a in self._need_launcher().apps}, key=str.lower)
+        return ToolResult(", ".join(names))
+
+    def _open_app(self, name):
+        from .launcher import match_app
+        launcher = self._need_launcher()
+        app, _ = match_app(name, launcher.apps)
+        if app is None:
+            return ToolResult(f"No installed app matches {name!r}. Call list_apps to see what's "
+                              "installed, or offer the website instead.", is_error=True)
+        ok = launcher.launch_app(app)
+        return ToolResult(f"Opened {app.name}." if ok else f"Couldn't start {app.name}.", is_error=not ok)
+
+    def _open_folder(self, folder):
+        from .launcher import folder_path
+        path = folder_path(folder)
+        if path is None:
+            return ToolResult(f"No folder {folder!r} in the home directory.", is_error=True)
+        ok = self._need_launcher().open_folder(path)
+        return ToolResult(f"Opened {path}." if ok else "Couldn't open the file manager.", is_error=not ok)
+
+    def _open_website(self, url):
+        from .launcher import web_url
+        clean_url = web_url(url)
+        if clean_url is None:
+            return ToolResult("That isn't a web address (http or https).", is_error=True)
+        ok = self._need_launcher().open_url(clean_url)
+        return ToolResult(f"Opened {clean_url}." if ok else "Couldn't open the browser.", is_error=not ok)
 
     def _join_meeting(self, key):
         event = self._event(key)

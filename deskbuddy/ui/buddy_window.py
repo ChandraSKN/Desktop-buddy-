@@ -32,6 +32,7 @@ from ..services.agent_tools import ToolBox
 from ..services.briefing import gather, write_brief
 from ..services.claude_hooks import describe as describe_claude
 from ..services.idle import IdleMonitor
+from ..services.launcher import Launcher
 from ..services.memory import MemoryStore
 from ..services.notifier import Notifier
 from ..services.reminders import (
@@ -96,6 +97,7 @@ class Buddy(QWidget):
         self.chair = None        # ChairScene while pulling up / sitting / standing
 
         self.memory = MemoryStore(MEMORY_DB)
+        self.launcher = Launcher()
         self.fixer = CorrectorPanel(self)
         self.chat = AssistantPanel(self, self.make_agent)
         self.minutes = MinutesBar(self, self.memory)
@@ -271,7 +273,7 @@ class Buddy(QWidget):
         self.wave(8)
 
     def make_agent(self):
-        return Agent(ToolBox(self.memory, lambda: self.events))
+        return Agent(ToolBox(self.memory, lambda: self.events, launcher=self.launcher))
 
     def outlook_url(self):
         return outlook_web_url(self.settings.value("calendar_url", ""))
@@ -299,6 +301,11 @@ class Buddy(QWidget):
             self.wave(3)
             if message.get("speak") and self.speak:
                 self.speaker.say(text)
+        elif cmd == "open" and str(message.get("what", "")).strip():
+            ok, text = self.launcher.open(str(message["what"])[:200])
+            reply({"ok": ok, "message": text})
+            if text:
+                self.say(text if ok else text.replace("Opening", "I couldn't open"), 3000)
         elif cmd == "claude" and message.get("kind") in ("done", "attention"):
             title, body = describe_claude(message)
             self.notifier.notify(title, body, "wellness", f"claude-{message.get('project')}")

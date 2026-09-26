@@ -165,6 +165,26 @@ phrase, and then only the transcribed words go to Claude.
 - **Cost:** ~550 MB of memory with the speech models loaded, ~5% of one core while idle.
   Turning listening off frees the CPU.
 
+## Opening apps, folders and websites
+
+Ask in the chat or by voice: *"Hey Buddy, open Firefox"*, *"open the calculator"*,
+*"open my Downloads"*, *"open YouTube"*, *"open something I can edit photos with"*.
+
+- **Plain "open / launch / start X"** is handled right away on this computer, without a
+  Claude call (it works even without an API key): X is matched against the installed
+  apps' menu entries by name, id, generic name ("web browser") and keywords, common
+  nicknames ("vs code", "files", "chrome") and small typos ("calcuator"). Folder names
+  (Downloads, Documents, Pictures…) and web addresses ("github.com") work too.
+- **Anything vaguer** goes to the assistant, which has `list_apps`, `open_app`,
+  `open_folder` and `open_website` tools, e.g. it checks what's installed before
+  suggesting a photo editor, and offers the website when an app isn't installed.
+- From a terminal or script: `buddy open firefox`.
+
+**What it can open:** installed applications (from their `.desktop` entries, never an
+arbitrary command), folders inside your home directory (no `../`, symlinks out, or
+system folders), and http(s) addresses. Apps start in their own systemd scope, as if
+opened from the dock, so they keep running when Buddy restarts.
+
 ## Meeting briefings
 
 With a meeting's first reminder (10 minutes before), Buddy looks for anything related he
@@ -183,6 +203,7 @@ owner-only). `setup.sh` installs the `buddy` command:
 ```bash
 buddy say "Build finished"          # bubble + wave
 buddy say --speak "Tests passed"    # …and say it
+buddy open firefox                  # open an app, folder or website
 buddy status                        # JSON: state, voice, minutes, idle time
 make test && buddy say "tests passed" || buddy say --speak "tests FAILED"
 ```
@@ -382,7 +403,7 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 112 tests, ~9 s, no display, mic or network
+.venv/bin/pytest                                # 137 tests, ~9 s, no display, mic or network
 systemctl --user kill --kill-whom=main -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```
@@ -405,6 +426,11 @@ and in the window: heard speech → assistant → spoken reply, standing still w
 talking mouth, and turning speech off. Copilot: hook timing per session (short tasks
 stay quiet), path-safe session ids, junk input, the `buddy` command with Buddy down, say /
 Claude / status messages over the real socket, related-minutes gathering, generic titles,
-"NONE" briefs, and the briefing appearing on the meeting card once.
+"NONE" briefs, and the briefing appearing on the meeting card once. Opening things: app
+discovery (hidden, link and broken entries skipped), matching what people say, "open"
+phrasing vs ordinary sentences, folders confined to home (symlink and `../` escapes),
+web-address validation, routing, the assistant's open tools, launching in a scope, and
+in the window: typed and spoken "open" without Claude, unknown apps going to Claude,
+and `buddy open` over the socket.
 
 Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.

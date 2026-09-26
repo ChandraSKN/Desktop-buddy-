@@ -7,6 +7,7 @@ from PyQt6.QtGui import QAction, QGuiApplication, QTextCursor
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QTextBrowser, QVBoxLayout, QWidget
 
 from ..services import agent as agent_mod
+from ..services.launcher import open_request
 from .styles import CHAT_CSS
 
 # who -> (background, label, pushed to the right)
@@ -115,6 +116,8 @@ class AssistantPanel(QWidget):
         be asked right now."""
         if self.busy:
             return False
+        if self.quick_open(text, spoken):
+            return True
         if not agent_mod.available():
             self._add("buddy", agent_mod.setup_hint())
             if spoken:
@@ -135,6 +138,24 @@ class AssistantPanel(QWidget):
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
         self.worker.start()
+        return True
+
+    def quick_open(self, text, spoken):
+        """"open firefox" / "open downloads": done right here, no Claude call. Anything the
+        launcher doesn't recognise goes to the assistant, which has the same tools."""
+        what = open_request(text)
+        if what is None:
+            return False
+        ok, message = self.buddy.launcher.open(what)
+        if message is None:
+            return False
+        reply = message if ok else message.replace("Opening", "I couldn't open")
+        self._add("you", ("🎤 " if spoken else "") + text)
+        self._add("buddy" if ok else "error", reply)
+        if spoken:
+            self.buddy.voice_reply(reply)
+        elif not self.isVisible():
+            self.buddy.say(reply, 3000)
         return True
 
     def on_text(self, chunk):

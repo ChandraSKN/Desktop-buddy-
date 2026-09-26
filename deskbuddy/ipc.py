@@ -2,6 +2,7 @@
 
     {"cmd": "say", "text": "Build finished", "speak": false}
     {"cmd": "claude", "kind": "done" | "attention", "project": "desktop-buddy", ...}
+    {"cmd": "open", "what": "firefox"} -> {"ok": true, "message": "Opening Firefox."}
     {"cmd": "status"}  -> replies with one JSON line
 
 The socket lives in $XDG_RUNTIME_DIR (a per-user, owner-only directory), so only your own
