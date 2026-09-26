@@ -131,3 +131,16 @@ def test_join_meeting_action_reaches_the_ui():
     opened = []
     agent.send("join my next meeting", on_action=opened.append)
     assert opened == [MEETING.url]
+
+
+def test_out_of_credits_reads_as_a_billing_problem():
+    import anthropic
+    import httpx2
+
+    from deskbuddy.services.agent import friendly_error
+
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx2.Response(400, request=request)
+    exc = anthropic.BadRequestError(
+        "Your credit balance is too low to access the Anthropic API.", response=response, body=None)
+    assert "out of credits" in friendly_error(exc)

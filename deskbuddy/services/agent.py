@@ -55,6 +55,9 @@ def friendly_error(exc):
     if isinstance(exc, anthropic.RateLimitError):
         return "I'm being rate limited. Give me a minute and ask again."
     if isinstance(exc, anthropic.APIStatusError):
+        if "credit balance" in str(exc.message).lower():
+            return ("Your Anthropic account is out of credits. Add some at console.anthropic.com "
+                    "→ Plans & Billing, then ask me again.")
         if exc.status_code >= 500:
             return "Claude is having trouble right now. Try again shortly."
         return f"Claude API error {exc.status_code}: {exc.message}"
