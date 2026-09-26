@@ -122,10 +122,24 @@ def correct_with_languagetool(text):
     return text, changes
 
 
+def _account_problem(exc):
+    """The key is fine to retry elsewhere: rejected, not allowed, or out of credits."""
+    import anthropic
+    return (isinstance(exc, (anthropic.AuthenticationError, anthropic.PermissionDeniedError))
+            or (isinstance(exc, anthropic.BadRequestError)
+                and "credit balance" in str(exc.message).lower()))
+
+
 def correct(text):
     name = backend_name()
     if name == "Claude API":
-        return correct_with_api(text)
+        try:
+            return correct_with_api(text)
+        except Exception as exc:
+            # an API-account problem shouldn't break fixing text while the CLI login works
+            if not (_account_problem(exc) and _claude_cli()):
+                raise
+        return correct_with_cli(text)
     if name == "Claude":
         return correct_with_cli(text)
     return correct_with_languagetool(text)
