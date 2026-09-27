@@ -111,7 +111,7 @@ class ListenerThread(QThread):
                                       "--format", "s16", "-"],
                                      stdout=subprocess.PIPE,          # its errors go to the log
                                      preexec_fn=ignore_debug_signal)
-        next_call_check, in_call, last_status = 0.0, False, None
+        next_call_check, in_call, last_status, warned = 0.0, False, None, False
         while not self._stop:
             chunk = self.proc.stdout.read(FRAME * 2)
             if len(chunk) < FRAME * 2:
@@ -137,6 +137,11 @@ class ListenerThread(QThread):
                 endpointer = Endpointer()                # drop anything half-heard
                 continue
             utterance = endpointer.feed(np.frombuffer(chunk, dtype=np.int16))
+            if endpointer.too_loud and not warned:
+                warned = True
+                print(f"voice: the microphone is far too loud (room noise {endpointer.floor:.2f}); "
+                      "lower the input volume, e.g. wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.2",
+                      flush=True)
             if utterance is None or not get_speech_timestamps(utterance, vad):
                 continue
             event = wake.on_utterance(utterance, time.monotonic())

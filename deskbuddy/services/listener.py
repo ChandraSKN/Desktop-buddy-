@@ -81,8 +81,16 @@ class Endpointer:
 
     def __init__(self):
         self.floor = 0.003
-        self.frames, self.pre = [], []
+        self.frames, self.pre, self.levels = [], [], []
         self.active, self.loud, self.quiet = False, 0, 0
+
+    def len_cut(self):
+        return len(self.frames) >= self.MAX_FRAMES
+
+    @property
+    def too_loud(self):
+        """The room alone is this loud: the mic gain is far too high to hear words."""
+        return self.floor > 0.1
 
     def feed(self, frame):
         audio = frame.astype(np.float32) / 32768.0
@@ -93,15 +101,21 @@ class Endpointer:
             if rms > start_gate:
                 self.loud += 1
                 if self.loud >= self.START_FRAMES:
-                    self.active, self.frames, self.quiet = True, list(self.pre), 0
+                    self.active, self.frames, self.quiet, self.levels = True, list(self.pre), 0, []
             else:
                 self.loud = 0
                 self.floor = 0.95 * self.floor + 0.05 * rms          # track the room
             return None
         self.frames.append(audio)
+        self.levels.append(rms)
         self.quiet = self.quiet + 1 if rms < max(self.floor * 2.0, 0.003) else 0
-        if self.quiet >= self.END_FRAMES or len(self.frames) >= self.MAX_FRAMES:
+        if self.len_cut():
+            # 12 s without a pause is the room, not a sentence (e.g. the mic gain jumped
+            # after a reboot): learn the new floor from it, or we'd never find a pause again
+            self.floor = max(self.floor, float(np.percentile(self.levels, 20)))
+        if self.quiet >= self.END_FRAMES or self.len_cut():
             frames, self.frames, self.active, self.loud, self.pre = self.frames, [], False, 0, []
+            self.levels = []
             if len(frames) - self.quiet >= self.MIN_FRAMES:
                 return np.concatenate(frames)
         return None

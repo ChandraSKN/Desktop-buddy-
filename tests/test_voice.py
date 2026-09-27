@@ -129,3 +129,13 @@ def test_thanks_ends_the_conversation(text):
                                   "thanks, and open firefox"])
 def test_questions_are_not_goodbyes(text):
     assert not is_goodbye(text)
+
+
+def test_endpointer_recovers_when_the_room_is_suddenly_loud():
+    """Mic gain reset to max after a reboot: the hiss never drops below the old gate."""
+    rng = np.random.default_rng(2)
+    hiss = [(rng.normal(0, 16000, FRAME)).clip(-32767, 32767).astype(np.int16) for _ in range(1200)]
+    ep = Endpointer()
+    run(ep, hiss)                                   # first block or two are the hiss itself
+    assert ep.too_loud
+    assert run(ep, hiss) == []                      # then it has learned the room
