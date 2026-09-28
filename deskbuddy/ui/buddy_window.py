@@ -348,6 +348,9 @@ class Buddy(QWidget):
             reply({"ok": ok, "message": text})
             if text:
                 self.say(text if ok else text.replace("Opening", "I couldn't open"), 3000)
+        elif cmd == "show" and message.get("activity") in ("film", "write"):
+            seconds = max(1.0, min(60.0, float(message.get("seconds") or 8)))
+            self.demo_activity = (message["activity"], time.monotonic() + seconds)
         elif cmd == "claude" and message.get("kind") in ("done", "attention"):
             title, body = describe_claude(message)
             self.notifier.notify(title, body, "wellness", f"claude-{message.get('project')}")
@@ -633,7 +636,25 @@ class Buddy(QWidget):
         # the pointer is over Wayland windows), so a hover lapses when the pointer goes still.
         hovering = self.hovered and time.monotonic() - self.last_pointer < HOVER_HOLD
         talking = self.speaker.mouth() is not None
-        return self.paused or hovering or self.busy or talking or self._drag_offset is not None
+        return (self.paused or hovering or self.busy or talking or self.activity() is not None
+                or self._drag_offset is not None)
+
+    def activity(self):
+        """What he's busy with, shown by holding a prop: "film" while recording a meeting,
+        "write" while the minutes are being written. He stands still meanwhile."""
+        minutes = getattr(self, "minutes", None)          # not made yet early in __init__
+        if minutes is None:
+            return None
+        demo = getattr(self, "demo_activity", None)       # `buddy show film`
+        if demo and time.monotonic() < demo[1]:
+            kind = demo[0]
+        elif minutes.recorder.recording:
+            kind = "film"
+        elif minutes.worker is not None:
+            kind = "write"
+        else:
+            return None
+        return kind if model3d.can_do(kind) else None
 
     def pick_next(self):
         now = time.monotonic()
@@ -674,6 +695,8 @@ class Buddy(QWidget):
                 self.vy = 0
                 self.state, self.state_until = "idle", now + 1.0
         elif self.chair is not None:
+            if self.activity() is not None and not self.chair.leaving:
+                self.stand_up()                                # busy: get up first
             if not self.chair.advance(now):
                 self.end_chair()
         elif not self.frozen():
@@ -725,7 +748,8 @@ class Buddy(QWidget):
         else:
             wave_t = time.monotonic() - self.wave_start if self.wave_start is not None else None
             model3d.draw_model(p, self.width(), self.height(), self.phase, walking, self.breath,
-                               self.yaw, wave_t, self.pad + WIN_W / 2, self.speaker.mouth())
+                               self.yaw, wave_t, self.pad + WIN_W / 2, self.speaker.mouth(),
+                               self.activity(), time.monotonic())
         p.end()
         self._frame = img
         # Only the character's own pixels catch the mouse; clicks elsewhere reach the

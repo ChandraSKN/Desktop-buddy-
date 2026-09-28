@@ -3,6 +3,7 @@
     buddy say "Build finished"          show it in his bubble (and wave)
     buddy say --speak "Tests passed"    …and say it out loud
     buddy open firefox                  open an app, folder ("downloads") or site
+    buddy show film                     play an animation for a while (film, write)
     buddy status                        what he's doing
     buddy claude-hook                   used by Claude Code hooks (reads JSON on stdin)
 
@@ -26,6 +27,9 @@ def main(argv=None):
     say.add_argument("--speak", action="store_true", help="say it out loud too")
     op = sub.add_parser("open", help="open an installed app, a folder or a website")
     op.add_argument("what", nargs="+")
+    show = sub.add_parser("show", help="play an animation: film (recording) or write (minutes)")
+    show.add_argument("activity", choices=["film", "write"])
+    show.add_argument("--seconds", type=float, default=8)
     sub.add_parser("status", help="print what Buddy is doing")
     sub.add_parser("claude-hook", help="for Claude Code hooks: reads the event JSON on stdin")
     args = parser.parse_args(argv)
@@ -35,6 +39,8 @@ def main(argv=None):
         return 0                                   # never fail a Claude Code hook
     if args.command == "say":
         ok = ipc.send({"cmd": "say", "text": " ".join(args.text), "speak": args.speak})
+    elif args.command == "show":
+        ok = ipc.send({"cmd": "show", "activity": args.activity, "seconds": args.seconds})
     elif args.command == "open":
         ok = ipc.send({"cmd": "open", "what": " ".join(args.what)}, timeout=15, want_reply=True)
         if ok:

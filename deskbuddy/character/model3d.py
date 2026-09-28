@@ -17,6 +17,7 @@ from ..config import ASSETS as _ASSETS_ROOT
 
 ASSETS = _ASSETS_ROOT / "model3d"
 WAVE_FPS = 14
+ACTIVITY_FPS = {"film": 6, "write": 9}     # film: gentle sway + REC blink; write: pen strokes
 
 
 @lru_cache(maxsize=1)
@@ -106,14 +107,25 @@ def can_talk():
     return "talk" in _manifest()["anims"]
 
 
-def draw_model(p, width, height, phase, walking, breath, yaw, wave_t=None, cx=None, mouth=None):
+def can_do(activity):
+    return available() and activity in _manifest()["anims"]
+
+
+def draw_model(p, width, height, phase, walking, breath, yaw, wave_t=None, cx=None, mouth=None,
+               activity=None, activity_t=0.0):
     """Draw the character bottom-centred at cx (default: the middle of a width x height area).
     phase: walk cycle angle; yaw: turn in radians (+ faces right); wave_t: seconds into a
-    wave, or None; mouth: 0-3 opening while speaking (idle angle only), or None."""
+    wave, or None; mouth: 0-3 opening while speaking (idle angle only), or None;
+    activity: "film" / "write" loop (idle angle only, before anything else), activity_t:
+    seconds into it."""
     m = _manifest()
     cx = width / 2 if cx is None else cx
     fw, fh = m["frame_size"]
-    if mouth is not None and not walking and "talk" in m["anims"]:
+    if activity is not None and not walking and activity in m["anims"]:
+        yi = int(next(iter(m["anims"][activity])))
+        strip, count = _strip(activity, yi)
+        frame = int(activity_t * ACTIVITY_FPS.get(activity, 8)) % count
+    elif mouth is not None and not walking and "talk" in m["anims"]:
         yi = int(next(iter(m["anims"]["talk"])))
         strip, count = _strip("talk", yi)
         frame = max(0, min(count - 1, mouth))

@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from deskbuddy import config
-from deskbuddy.character import chair
+from deskbuddy.character import chair, model3d
 from deskbuddy.ui.buddy_window import Buddy
 
 
@@ -140,3 +140,22 @@ def test_speaking_can_be_turned_off(buddy, monkeypatch):
     buddy.toggle_speak()
     buddy.voice_reply("hello")
     assert said == [] and "hello" in buddy.bubble.text
+
+
+@pytest.mark.skipif(not all(model3d.can_do(a) for a in ("film", "write")), reason="activity frames not rendered")
+def test_he_films_while_recording_and_writes_while_the_minutes_are_made(buddy, monkeypatch):
+    assert buddy.activity() is None
+    drawn = []
+    real = model3d.draw_model
+    monkeypatch.setattr(model3d, "draw_model", lambda *a, **k: drawn.append(a[10]) or real(*a, **k))
+    monkeypatch.setattr(buddy.minutes.recorder, "procs", [object()])      # recording
+    assert buddy.activity() == "film" and buddy.frozen()                   # stands still, no walking
+    buddy.render_frame()
+    monkeypatch.setattr(buddy.minutes.recorder, "procs", [])
+    monkeypatch.setattr(buddy.minutes, "worker", object())               # minutes being written
+    assert buddy.activity() == "write"
+    buddy.render_frame()
+    assert drawn == ["film", "write"]
+    img = buddy._frame
+    assert sum(img.pixelColor(x, y).alpha() > 0
+               for x in range(0, img.width(), 5) for y in range(0, img.height(), 5)) > 200

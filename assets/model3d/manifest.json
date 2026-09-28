@@ -114,6 +114,18 @@
     "file": "talk_2.png",
     "frames": 4
    }
+  },
+  "film": {
+   "2": {
+    "file": "film_2.png",
+    "frames": 12
+   }
+  },
+  "write": {
+   "2": {
+    "file": "write_2.png",
+    "frames": 16
+   }
   }
  },
  "frame_size": [
