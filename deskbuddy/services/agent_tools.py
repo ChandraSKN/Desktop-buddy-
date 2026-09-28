@@ -2,9 +2,11 @@
 
 Deliberately small and local: read your meetings and their minutes, set/list/cancel
 reminders, remember/recall/forget facts, join a meeting, and open installed apps, folders
-in your home directory or web pages (services/launcher.py), and draft WhatsApp messages
-that the user then confirms (services/whatsapp.py). No email, no file contents, no shell
-commands, and nothing is sent on WhatsApp without the user's yes.
+in your home directory or web pages (services/launcher.py), draft WhatsApp messages
+that the user then confirms (services/whatsapp.py), and propose coding tasks for Claude
+Code in a project folder (services/code_tasks.py). No email, no file contents, no shell
+commands of its own; nothing is sent on WhatsApp and no Claude Code task runs without the
+user's yes.
 Handlers validate their input themselves (tool inputs stream eagerly, so the API doesn't),
 and anything the UI must do (opening a link) comes back as an action for the main thread.
 
@@ -82,11 +84,29 @@ TOOLS = [
           {"contact_key": {"type": "string", "description": "From find_whatsapp_contact."},
            "text": {"type": "string", "description": "The message itself."}},
           ["contact_key", "text"]),
+    _tool("list_projects", "The user's code project folders (under their home directory), most "
+          "recently changed first, to pick one for start_code_task / open_in_vscode.", {}),
+    _tool("open_in_vscode", "Open a project folder in Visual Studio Code.",
+          {"project": {"type": "string", "description": "Folder name from list_projects, or a path."}},
+          ["project"]),
+    _tool("start_code_task",
+          "Propose a programming task for Claude Code to do in a project folder (write or change "
+          "code, fix a bug, run tests or commands, git…). It does NOT start yet: the user sees the "
+          "folder and task on a card and must say yes or click Run; then VS Code opens there and "
+          "Claude Code works on it with full permissions. Write the task as a clear instruction, "
+          "keeping everything the user asked for and adding nothing. A task in the same folder "
+          "within an hour continues the previous Claude Code session (so \"now commit it\" works), "
+          "unless fresh is true. Afterwards ask briefly \"Shall I start?\"; never say it's done.",
+          {"project": {"type": "string", "description": "Folder name from list_projects, or a path."},
+           "task": {"type": "string"},
+           "fresh": {"type": "boolean", "description": "Start a new session instead of continuing."}},
+          ["project", "task"]),
+    _tool("code_task_status", "What the running Claude Code task is doing right now.", {}),
     _tool("join_meeting", "Open a meeting's join link (Teams, Meet, Zoom…) in the browser.",
           {"key": {"type": "string", "description": "Meeting key from get_meetings."}}, ["key"]),
 ]
 
-_TYPES = {"string": str, "integer": int}
+_TYPES = {"string": str, "integer": int, "boolean": bool}
 
 
 def short_key(event):
@@ -113,7 +133,7 @@ def validate(name, args):
         if key not in props:
             raise ToolInputError(f"unexpected {key!r}")
         want = _TYPES[props[key]["type"]]
-        if not isinstance(value, want) or isinstance(value, bool):
+        if not isinstance(value, want) or (isinstance(value, bool) and want is not bool):
             raise ToolInputError(f"{key!r} must be a {props[key]['type']}")
         if want is str and not value.strip():
             raise ToolInputError(f"{key!r} is empty")
@@ -135,6 +155,8 @@ class ToolBox:
     get_events: object                    # () -> list[Event], the calendar as last synced
     launcher: object = None               # services.launcher.Launcher, for the open_* tools
     whatsapp: object = None               # ui.whatsapp.WhatsAppLink: .state, .contacts, .propose()
+    code: object = None                   # ui.code_task.CodeRunner: .plan(), .propose(), .snapshot()
+    projects: object = None               # () -> list[Path], for tests; default scans home
     now: object = field(default=lambda: datetime.now(UTC))
 
     def run(self, name, args):
@@ -280,6 +302,53 @@ class ToolBox:
         wa.propose(contact, text)
         return ToolResult(f"Shown to the user for confirmation, to {contact.name}. NOT sent yet: "
                           "ask them to confirm.")
+
+    def _project(self, name):
+        from .code_tasks import find_projects, match_project
+        found = (self.projects or find_projects)()
+        folder = match_project(name, found)
+        if folder is None:
+            raise ToolInputError(f"no project folder matches {name!r}; call list_projects and "
+                                 "ask the user which one if it's unclear")
+        return folder
+
+    def _list_projects(self):
+        from .code_tasks import HOME, find_projects
+        found = (self.projects or find_projects)()[:40]
+        return ToolResult(json.dumps([str(p).replace(str(HOME), "~", 1) for p in found])
+                          if found else "No project folders found in the home directory.")
+
+    def _open_in_vscode(self, project):
+        folder = self._project(project)
+        from .launcher import _spawn
+        spawn = self.launcher.spawn if self.launcher else _spawn
+        ok = spawn(["code", str(folder)], "vscode-" + folder.name)
+        return ToolResult(f"Opened {folder.name} in VS Code." if ok else "Couldn't start VS Code.",
+                          is_error=not ok)
+
+    def _start_code_task(self, project, task, fresh=False):
+        if self.code is None:
+            raise ToolInputError("Claude Code tasks aren't available here")
+        if self.code.busy:
+            raise ToolInputError("a Claude Code task is still running; check code_task_status, "
+                                 "or ask the user to wait or stop it on the card")
+        if len(task) > 4000:
+            raise ToolInputError("keep the task under 4000 characters")
+        planned = self.code.plan(self._project(project), task, fresh)
+        self.code.propose(planned)
+        return ToolResult(f"Shown to the user for confirmation: folder {planned.folder}"
+                          + (", continuing the previous session" if planned.resume else "")
+                          + ". NOT started yet: ask them to confirm.")
+
+    def _code_task_status(self):
+        if self.code is None:
+            raise ToolInputError("Claude Code tasks aren't available here")
+        task, steps = self.code.snapshot()
+        if task is None:
+            return ToolResult("No Claude Code task is running.")
+        return ToolResult(json.dumps({"folder": task.folder.name, "task": task.task,
+                                      "steps_so_far": len(steps), "latest": steps[-5:]},
+                                     ensure_ascii=False))
 
     def _join_meeting(self, key):
         event = self._event(key)

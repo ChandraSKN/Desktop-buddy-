@@ -120,6 +120,9 @@ class AssistantPanel(QWidget):
         if self.buddy.draft_card.draft and (is_yes(text) or is_no(text)):
             self._add("you", ("🎤 " if spoken else "") + text)     # the answer to "Send it?"
             return self.buddy.answer_draft(is_yes(text), spoken)
+        if self.buddy.code_card.proposal and (is_yes(text) or is_no(text)):
+            self._add("you", ("🎤 " if spoken else "") + text)     # the answer to "Shall I start?"
+            return self.buddy.answer_code(is_yes(text), spoken)
         if self.quick_open(text, spoken):
             return True
         if not agent_mod.available():

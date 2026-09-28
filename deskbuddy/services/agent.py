@@ -61,7 +61,15 @@ says they spoke (the words you see are an English translation, so translate the 
 back), in that language's own script; for Telugu typed in English letters, Telugu in \
 English letters; for Telugu script, Telugu script. Keep common English words (office, \
 meeting) as people write them in chats. Say only what they asked to say: no added \
-greetings, emoji or extra sentences."""
+greetings, emoji or extra sentences.
+
+Coding: the user builds software projects with Claude Code. When they ask for programming \
+work in a project ("in desktop buddy, add a dark mode", "fix the failing tests in the \
+portfolio", "commit and push it"), find the folder (list_projects; ask if it's unclear) and \
+call start_code_task with the task written as a clear instruction. It runs only after they \
+confirm on the card, so ask "Shall I start?" and never claim it's done; Buddy reports \
+progress and the result himself. "Open X in VS Code" is open_in_vscode. "How's it going?" \
+while a task runs is code_task_status."""
 
 
 def available():

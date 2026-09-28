@@ -24,7 +24,7 @@ FRAME = 480                       # 30 ms
 FOLLOW_UP = 8.0                   # seconds to say the command after a bare "Hey Buddy"
 CONVERSATION = 10.0               # seconds to ask a follow-up after he's answered
 
-_WAKE = re.compile(r"\b(hey|hi|hay|hei|a|ok|okay)[\s,.!]+(buddy|buddie|budy|bady|body|buddi|bodhi|birdie)\b")
+_WAKE = re.compile(r"\b(hey|hi|hay|hei|jay|a|ok|okay)[\s,.!]+(buddy|buddie|budy|bady|body|buddi|bodhi|birdie)\b")
 
 
 def normalize(text):
@@ -73,16 +73,18 @@ def is_goodbye(text):
 class Endpointer:
     """Feed 30 ms int16 frames; get back finished utterances (float32 arrays)."""
 
-    START_FRAMES = 5              # 150 ms above the gate to start
+    START_FRAMES = 5              # 150 ms above the gate …
+    START_WINDOW = 8              # … within 240 ms to start (speech dips between sounds)
     END_FRAMES = 25               # 750 ms below it to finish
     PRE_ROLL = 10                 # keep 300 ms before the start
+    GATE = 3.0                    # speech starts this many times louder than the room
     MIN_FRAMES = 12               # ignore blips under 360 ms
     MAX_FRAMES = 400              # cut at 12 s
 
     def __init__(self):
         self.floor = 0.003
         self.frames, self.pre, self.levels = [], [], []
-        self.active, self.loud, self.quiet = False, 0, 0
+        self.active, self.recent, self.quiet = False, [], 0
 
     def len_cut(self):
         return len(self.frames) >= self.MAX_FRAMES
@@ -95,15 +97,15 @@ class Endpointer:
     def feed(self, frame):
         audio = frame.astype(np.float32) / 32768.0
         rms = float(np.sqrt(np.mean(audio ** 2))) if len(audio) else 0.0
-        start_gate = max(self.floor * 3.0, 0.004)
+        start_gate = max(self.floor * self.GATE, 0.004)
         if not self.active:
             self.pre = (self.pre + [audio])[-self.PRE_ROLL:]
-            if rms > start_gate:
-                self.loud += 1
-                if self.loud >= self.START_FRAMES:
-                    self.active, self.frames, self.quiet, self.levels = True, list(self.pre), 0, []
-            else:
-                self.loud = 0
+            loud = rms > start_gate
+            self.recent = (self.recent + [loud])[-self.START_WINDOW:]
+            if sum(self.recent) >= self.START_FRAMES:
+                self.active, self.frames, self.quiet, self.levels = True, list(self.pre), 0, []
+                self.recent = []
+            elif not loud:
                 self.floor = 0.95 * self.floor + 0.05 * rms          # track the room
             return None
         self.frames.append(audio)
@@ -114,7 +116,7 @@ class Endpointer:
             # after a reboot): learn the new floor from it, or we'd never find a pause again
             self.floor = max(self.floor, float(np.percentile(self.levels, 20)))
         if self.quiet >= self.END_FRAMES or self.len_cut():
-            frames, self.frames, self.active, self.loud, self.pre = self.frames, [], False, 0, []
+            frames, self.frames, self.active, self.recent, self.pre = self.frames, [], False, [], []
             self.levels = []
             if len(frames) - self.quiet >= self.MIN_FRAMES:
                 return np.concatenate(frames)

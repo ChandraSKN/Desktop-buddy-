@@ -18,6 +18,7 @@ from ..services.speech import MOUTH_FPS, TELUGU_VOICE, Voice, clean_for_speech
 from ..services.telugu import has_telugu
 
 CALL_CHECK_EVERY = 5.0
+WAKE_PROMPT = "Hey Buddy."
 
 
 class ListenerThread(QThread):
@@ -87,7 +88,11 @@ class ListenerThread(QThread):
             self.language = "te"                     # Hindi/Tamil/… labels are Telugu here
             return translated or text
 
-        wake = WakeListener(lambda a: text_of(quick_model, a, language="en")[0], command_text)
+        # The prompt primes Whisper to expect the wake phrase: with an Indian accent, tiny.en
+        # heard "Hey Buddy" as "Okay, but…" or "gave with…" (3 of 16 woke him); primed, 13 of
+        # 16 did, with no false wakes in 48 other sentences (measured, 2026-09-28).
+        wake = WakeListener(lambda a: text_of(quick_model, a, language="en", initial_prompt=WAKE_PROMPT)[0],
+                            command_text)
         vad = VadOptions(min_speech_duration_ms=250)
         failures = []
         while not self._stop:

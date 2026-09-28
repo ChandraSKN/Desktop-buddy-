@@ -31,6 +31,7 @@ from ..services.agent import Agent
 from ..services.agent_tools import ToolBox
 from ..services.briefing import gather, write_brief
 from ..services.claude_hooks import describe as describe_claude
+from ..services.code_tasks import summary as code_summary
 from ..services.idle import IdleMonitor
 from ..services.launcher import Launcher
 from ..services.listener import CONVERSATION, is_goodbye
@@ -45,11 +46,14 @@ from ..services.reminders import (
     local_time,
     meeting_text,
     outlook_web_url,
+    spoken_reminder,
     upcoming,
     validate_url,
+    voice_stage,
 )
 from .assistant_panel import AssistantPanel
 from .bubble import Bubble
+from .code_task import CodeCard, CodeRunner
 from .command_server import CommandServer
 from .corrector_panel import CorrectorPanel
 from .meeting_card import MeetingCard
@@ -107,6 +111,12 @@ class Buddy(QWidget):
         self.draft_card = DraftCard(self)
         self.draft_by_voice = False
         self.link_dialog = None
+        self.code = CodeRunner(self)
+        self.code.proposed.connect(self.on_code_proposed)
+        self.code.progress.connect(self.on_code_progress)
+        self.code.finished.connect(self.on_code_finished)
+        self.code_card = CodeCard(self)
+        self.code_by_voice = False
         if self.whatsapp.linked:
             after(self, 4000, self.whatsapp.start)
         self.fixer = CorrectorPanel(self)
@@ -145,10 +155,11 @@ class Buddy(QWidget):
         self.calendar_ok = None
         self.calendar_status = "Not connected"
         self.schedule = ReminderSchedule(datetime.now(UTC))
+        self.spoken = {}                # meeting key -> voice stages already said aloud
         self.reminder_timer = QTimer(self, timeout=self.check_reminders)
         self.reminder_timer.start(1000)
         self.calendar_timer = QTimer(self, timeout=self.sync_calendar)
-        self.calendar_timer.start(5 * 60 * 1000)
+        self.calendar_timer.start(2 * 60 * 1000)
         after(self, 1500, self.sync_calendar)
         QGuiApplication.primaryScreen().availableGeometryChanged.connect(lambda *_: self.update_geometry())
         QGuiApplication.instance().screenAdded.connect(lambda *_: self.update_geometry())
@@ -230,6 +241,11 @@ class Buddy(QWidget):
             nxt = upcoming(events, datetime.now(UTC), 1)
             if nxt:
                 self.say(f"Calendar connected. Next: {nxt[0].title[:40]} at {local_time(nxt[0].start)}", 6000)
+        for ev in self.schedule.added(events, datetime.now(UTC)):
+            _, when = meeting_text(ev, datetime.now(UTC))
+            self.notifier.notify(f"📅 New meeting: {ev.title}", f"{when[0].upper()}{when[1:]} · "
+                                 f"{local_time(ev.start)}–{local_time(ev.end)}", "meeting", ev.key)
+            self.pending.append(f"📅 New meeting: {ev.title[:60]} at {local_time(ev.start)} ({when}).")
         self.check_reminders()
 
     def calendar_failed(self, message, source):
@@ -272,11 +288,22 @@ class Buddy(QWidget):
                 actions = [("outlook", "Open in Outlook"), ("dismiss", "Dismiss")]
             self.notifier.notify(f"📅 {ev.title}", body, "meeting", ev.key, actions)
             self.card.show_event(ev)
+            self.speak_reminder(ev)
             self.start_brief(ev)
             self.wave(12)
         else:
             self.notifier.notify("💧 Time for a break", WELLNESS_TEXT, "wellness")
             self.pending.append(reminder.text)
+
+    def speak_reminder(self, event):
+        """Say a meeting reminder out loud at 15 min, 5 min and the start (not every repeat)."""
+        now = datetime.now(UTC)
+        stage = voice_stage(event, now)
+        said = self.spoken.setdefault(event.key, set())
+        if stage in said or not self.speak or self.on_call():
+            return
+        said.add(stage)
+        self.speaker.say(spoken_reminder(event, now))
 
     def deliver_own(self, reminder):
         """A reminder the assistant set for you ("remind me after the 3 pm meeting…")."""
@@ -288,7 +315,7 @@ class Buddy(QWidget):
 
     def make_agent(self):
         return Agent(ToolBox(self.memory, lambda: self.events, launcher=self.launcher,
-                             whatsapp=self.whatsapp))
+                             whatsapp=self.whatsapp, code=self.code))
 
     def outlook_url(self):
         return outlook_web_url(self.settings.value("calendar_url", ""))
@@ -375,7 +402,8 @@ class Buddy(QWidget):
 
     def on_heard(self, text, language="en"):
         self.stand_up()
-        if is_goodbye(text) and not self.draft_card.draft:   # "thanks" ends the conversation
+        if is_goodbye(text) and not (self.draft_card.draft or self.code_card.proposal):
+            # "thanks" ends the conversation; "no" to a card is an answer
             self.say("👍", 2000)
             return
         self.say(f"🎤 “{text}”", 20000)
@@ -465,12 +493,52 @@ class Buddy(QWidget):
         self.chat.note(f"✔ Sent to {draft.contact.name}: {draft.text}" if ok
                        else f"Not sent to {draft.contact.name}: {error}")
 
-    def _tell(self, text):
+    def _tell(self, text, spoken=None):
         """A short answer, out loud as well if the question was spoken."""
-        if self.draft_by_voice:
+        if self.draft_by_voice if spoken is None else spoken:
             self.voice_reply(text)
         else:
             self.say(text, 4000)
+
+    # ---- Claude Code tasks --------------------------------------------------------
+    def on_code_proposed(self, task):
+        """The assistant wrote down a coding task; it waits on the card for a yes."""
+        self.stand_up()
+        self.code_by_voice = self.chat.spoken
+        self.code_card.ask(task)
+
+    def answer_code(self, yes, spoken=False):
+        """Run / Cancel on the card, or "yes" / "no" said or typed while it's up."""
+        task = self.code_card.proposal
+        if task is None:
+            return False
+        self.code_by_voice = spoken or self.code_by_voice
+        if not yes:
+            self.code_card.hide_card()
+            self._tell("Okay, I won't start it.", self.code_by_voice)
+            return True
+        self.launcher.spawn(["code", str(task.folder)], "vscode-" + task.folder.name)
+        self.code_card.running(task)
+        if self.code.start(task):
+            self._tell(f"Starting Claude Code in {task.folder.name}.", self.code_by_voice)
+        return True
+
+    def on_code_progress(self, text):
+        self.code_card.add_step(text)
+
+    def on_code_finished(self, task, ok, result):
+        said = code_summary(result) or ("Done." if ok else "Claude Code stopped.")
+        self.code_card.done(ok, said)
+        self.chat.note(("✅ Claude Code finished in " if ok else "⚠️ Claude Code stopped in ")
+                       + f"{task.folder.name}: {result[:1500]}")
+        self.notifier.notify("✅ Claude Code finished" if ok else "⚠️ Claude Code stopped",
+                             f"{task.folder.name}: {said}", "wellness", f"code-{task.folder.name}")
+        self.stand_up()
+        self.wave(4)
+        if self.code_by_voice and not self.on_call():
+            self.voice_reply(said)
+        else:
+            self.say(said, max(6000, 60 * len(said)))
 
     def join_meeting(self, event):
         """Open the meeting's link, stop reminding about it, and offer to take minutes."""
@@ -488,7 +556,8 @@ class Buddy(QWidget):
 
     def stack_top(self):
         """Top edge of whatever floats above Buddy (card, minutes bar), for the bubble."""
-        tops = [w.y() for w in (self.card, self.minutes, self.draft_card) if w.isVisible()]
+        tops = [w.y() for w in (self.card, self.minutes, self.draft_card, self.code_card)
+                if w.isVisible()]
         return min(tops) if tops else self.y() + 10
 
     def acknowledge(self, key):
@@ -638,6 +707,7 @@ class Buddy(QWidget):
         self.card.follow(self)
         self.minutes.follow(self)
         self.draft_card.follow(self)
+        self.code_card.follow(self)
         self.update()
 
     # ---- painting -------------------------------------------------------------
@@ -793,6 +863,7 @@ class Buddy(QWidget):
             return
         self.minutes.shutdown()         # finishes the audio; minutes resume at the next start
         self.whatsapp.stop()
+        self.code.stop()
         self.speaker.stop()
         if self.listener.isRunning():
             self.listener.stop()

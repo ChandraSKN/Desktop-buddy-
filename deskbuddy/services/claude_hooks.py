@@ -25,6 +25,8 @@ def _state_file(state_dir, session):
 
 def handle(event, state_dir=STATE, now=None):
     """The Buddy message for a hook event, or None."""
+    if os.environ.get("BUDDY_CODE_TASK"):            # Buddy started this one and reports it himself
+        return None
     now = time.time() if now is None else now
     name = event.get("hook_event_name", "")
     project = Path(event.get("cwd") or ".").name or "your project"

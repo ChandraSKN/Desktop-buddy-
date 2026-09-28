@@ -4,6 +4,8 @@ CARD_CSS = """
 QWidget#card { background: #1d2233; border: 1px solid #5b73e8; border-radius: 14px; }
 QLabel { color: #e8ecf8; }
 QLabel#when { color: #9fb2ff; font-size: 11px; font-weight: 600; }
+QLabel#countdown { color: #ffffff; font-size: 26px; font-weight: 700; }
+QLabel#countdown[late="true"] { color: #ffb3a7; font-size: 18px; }
 QLabel#title { font-size: 14px; font-weight: 600; }
 QLabel#time { color: #9aa6c8; font-size: 11px; }
 QLabel#link { color: #8fb4ff; font-size: 11px; }

@@ -8,10 +8,11 @@ from urllib.parse import urlparse
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-LEAD = timedelta(minutes=10)       # first reminder this long before a meeting
+LEAD = timedelta(minutes=15)       # first reminder this long before a meeting
 REPEAT = timedelta(minutes=2)      # then remind again this often until Join/Dismiss
 GRACE = timedelta(minutes=10)      # keep reminding this long after the start
 NOW_WINDOW = timedelta(minutes=1)  # within this of the start counts as "starting now"
+SOON = timedelta(hours=1)          # a meeting added this close to its start gets a heads-up
 
 WELLNESS_TEXT = "Time for water! Stand up, stretch, and walk around for a couple of minutes."
 
@@ -131,6 +132,40 @@ def meeting_text(event, now):
     return "meeting-late", f"started {round(-until.total_seconds() / 60)} min ago"
 
 
+def countdown(event, now):
+    """Time left until the start as "14:32" (or "1:05:09"), or "-3:12" once it has begun."""
+    secs = int((event.start - now).total_seconds())
+    sign, secs = ("-", -secs) if secs < 0 else ("", secs)
+    h, rest = divmod(secs, 3600)
+    m, s = divmod(rest, 60)
+    return f"{sign}{h}:{m:02}:{s:02}" if h else f"{sign}{m}:{s:02}"
+
+
+def voice_stage(event, now):
+    """Which spoken reminder fits now: "early" (15 min out), "soon" (5 min or less) or
+    "now" (at or after the start). Each is said once per meeting."""
+    until = event.start - now
+    if until <= NOW_WINDOW:
+        return "now"
+    return "soon" if until <= timedelta(minutes=5) else "early"
+
+
+def spoken_reminder(event, now):
+    """What Buddy says out loud for a meeting reminder."""
+    title = event.title[:80]
+    kind, when = meeting_text(event, now)
+    if kind == "meeting":
+        mins = max(1, round((event.start - now).total_seconds() / 60))
+        unit = "minute" if mins == 1 else "minutes"
+        if mins > 5:
+            return f"Heads up! Your meeting, {title}, starts in {mins} {unit}."
+        return f"{title} starts in {mins} {unit}. Time to get ready."
+    how = "Press Join on my card." if event.url else "Open it from Outlook."
+    if kind == "meeting-now":
+        return f"{title} is starting now. {how}"
+    return f"{title} {when}. {how}"
+
+
 class ReminderSchedule:
     """Wellness reminders every hour. Meeting reminders start LEAD before the meeting and
     repeat every REPEAT (plus once exactly at the start) until acknowledged via
@@ -140,10 +175,19 @@ class ReminderSchedule:
         self.next_wellness = now + timedelta(hours=1)
         self.next_at = {}     # meeting key -> when to remind next
         self.acked = {}       # meeting key -> forget after this time
+        self.known = None     # meeting keys seen in the last calendar sync (None = no sync yet)
 
     def took_break(self, now):
         """You were away from the computer: the next wellness reminder is an hour from now."""
         self.next_wellness = now + timedelta(hours=1)
+
+    def added(self, events, now):
+        """Meetings that appeared since the last sync and start within SOON, but not within
+        LEAD (those get a real reminder straight away). Nothing on the first sync."""
+        fresh = [] if self.known is None else [
+            e for e in events if e.key not in self.known and LEAD < e.start - now <= SOON]
+        self.known = {e.key for e in events}
+        return fresh
 
     def acknowledge(self, key, now):
         self.acked[key] = now + timedelta(days=1)

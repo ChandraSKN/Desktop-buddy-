@@ -4,11 +4,14 @@ from datetime import UTC, datetime, timedelta
 from deskbuddy.services.reminders import (
     Event,
     ReminderSchedule,
+    countdown,
     find_join_url,
     outlook_web_url,
     parse_events,
+    spoken_reminder,
     upcoming,
     validate_url,
+    voice_stage,
 )
 
 UTC = UTC
@@ -27,7 +30,7 @@ class RemindersTest(unittest.TestCase):
 
     def test_meeting_lead_time_and_duplicate_suppression(self):
         schedule = ReminderSchedule(NOW)
-        event = ev('one', NOW+timedelta(minutes=11), 'Review')
+        event = ev('one', NOW+timedelta(minutes=16), 'Review')
         self.assertEqual(schedule.due(NOW,[event]), [])
         self.assertEqual(len(schedule.due(NOW+timedelta(minutes=1),[event])),1)
         self.assertEqual(schedule.due(NOW+timedelta(minutes=2),[event]),[])
@@ -100,6 +103,42 @@ END:VCALENDAR\r
         event = ev('late', NOW+timedelta(seconds=30), 'Sync')
         self.assertEqual([r.kind for r in schedule.due(NOW, [event])], ['meeting-now'])
         self.assertEqual(schedule.due(NOW+timedelta(seconds=10), [event]), [])
+
+    def test_meeting_fifteen_minutes_away_reminds_now(self):
+        schedule = ReminderSchedule(NOW)
+        event = ev('soon', NOW+timedelta(minutes=15), 'Test 1')
+        reminders = schedule.due(NOW, [event])
+        self.assertEqual([r.text for r in reminders], ['Test 1 — starts in 15 min.'])
+
+    def test_added_meetings_get_a_heads_up(self):
+        schedule = ReminderSchedule(NOW)
+        old = ev('old', NOW+timedelta(minutes=40), 'Old')
+        self.assertEqual(schedule.added([old], NOW), [])          # first sync: nothing is "new"
+        new = ev('new', NOW+timedelta(minutes=30), 'New')
+        close = ev('close', NOW+timedelta(minutes=5), 'Close')      # gets a real reminder instead
+        far = ev('far', NOW+timedelta(hours=3), 'Far')
+        self.assertEqual(schedule.added([old, new, close, far], NOW), [new])
+        self.assertEqual(schedule.added([old, new, close, far], NOW+timedelta(minutes=2)), [])
+
+    def test_countdown(self):
+        event = ev('c', NOW+timedelta(minutes=14, seconds=32), 'X')
+        self.assertEqual(countdown(event, NOW), '14:32')
+        self.assertEqual(countdown(event, NOW+timedelta(minutes=14, seconds=27)), '0:05')
+        self.assertEqual(countdown(event, NOW+timedelta(minutes=17, seconds=44)), '-3:12')
+        self.assertEqual(countdown(ev('h', NOW+timedelta(hours=1, seconds=9), 'X'), NOW), '1:00:09')
+
+    def test_voice_stages_and_words(self):
+        event = ev('v', NOW+timedelta(minutes=15), 'Test 1', 'https://meet.google.com/abc-defg-hij')
+        self.assertEqual(voice_stage(event, NOW), 'early')
+        self.assertEqual(voice_stage(event, NOW+timedelta(minutes=10)), 'soon')
+        self.assertEqual(voice_stage(event, NOW+timedelta(minutes=15)), 'now')
+        self.assertEqual(voice_stage(event, NOW+timedelta(minutes=18)), 'now')
+        self.assertEqual(spoken_reminder(event, NOW), 'Heads up! Your meeting, Test 1, starts in 15 minutes.')
+        self.assertEqual(spoken_reminder(event, NOW+timedelta(minutes=13)),
+                         'Test 1 starts in 2 minutes. Time to get ready.')
+        self.assertEqual(spoken_reminder(event, NOW+timedelta(minutes=15)),
+                         'Test 1 is starting now. Press Join on my card.')
+        self.assertIn('Open it from Outlook', spoken_reminder(ev('n', NOW, 'No link'), NOW))
 
     def test_outlook_web_link(self):
         self.assertIn('outlook.office.com', outlook_web_url('https://outlook.office365.com/owa/calendar/x/calendar.ics'))

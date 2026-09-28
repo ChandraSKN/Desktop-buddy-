@@ -157,3 +157,28 @@ def test_brief_appears_on_the_meeting_card(buddy, qtbot, monkeypatch):
     assert "send Uday the specs" in buddy.card.brief.text()
     buddy.start_brief(ev)                                      # once per meeting
     assert len(buddy.brief_workers) <= 1
+
+
+def test_meeting_reminder_is_spoken_at_15_5_and_start_with_a_countdown(buddy, monkeypatch):
+    from deskbuddy.services.reminders import Reminder
+    from deskbuddy.ui import buddy_window
+    said = []
+    monkeypatch.setattr(buddy.speaker, "say", lambda text: said.append(text) or True)
+    monkeypatch.setattr(buddy, "start_brief", lambda ev: None)
+    buddy.speak = True
+    start = datetime.now(UTC).replace(microsecond=0) + timedelta(hours=1)   # the card reads the real clock
+    ev = Event("talk", start, "Test 1", start + timedelta(minutes=30), "")
+    clock = [start - timedelta(minutes=15)]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+    monkeypatch.setattr(buddy_window, "datetime", Clock)
+    for minutes_before in (15, 13, 11, 5, 3, 0, -2):
+        clock[0] = start - timedelta(minutes=minutes_before)
+        buddy.deliver(Reminder("meeting", "", ev))
+    assert said == ["Heads up! Your meeting, Test 1, starts in 15 minutes.",
+                    "Test 1 starts in 5 minutes. Time to get ready.",
+                    "Test 1 is starting now. Open it from Outlook."]
+    assert buddy.card.countdown.text().startswith("⏱")

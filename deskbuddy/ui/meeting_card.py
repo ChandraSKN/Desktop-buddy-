@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QGuiApplication
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from ..services.reminders import local_time, meeting_text
+from ..services.reminders import countdown, local_time, meeting_text
 from .styles import CARD_CSS
 from .timers import after
 
@@ -33,6 +33,7 @@ class MeetingCard(QWidget):
         lay.setContentsMargins(14, 10, 14, 12)
         lay.setSpacing(4)
         self.when = QLabel(objectName="when")
+        self.countdown = QLabel(objectName="countdown")
         self.title = QLabel(objectName="title", wordWrap=True)
         self.time = QLabel(objectName="time")
         self.link = QLabel(objectName="link", openExternalLinks=True,
@@ -40,7 +41,7 @@ class MeetingCard(QWidget):
         self.nolink = QLabel("No meeting link in this invite.", objectName="nolink")
         self.brief = QLabel(objectName="brief", wordWrap=True)
         self.brief.hide()
-        for w in (self.when, self.title, self.time, self.link, self.nolink, self.brief):
+        for w in (self.when, self.countdown, self.title, self.time, self.link, self.nolink, self.brief):
             lay.addWidget(w)
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 0)
@@ -73,7 +74,7 @@ class MeetingCard(QWidget):
         self.show()
         self.raise_()
         self.follow(self.buddy)
-        self._tick.start(15000)
+        self._tick.start(1000)             # the countdown ticks every second
 
     def refresh(self):
         if self.event is None:
@@ -84,6 +85,10 @@ class MeetingCard(QWidget):
             return
         _, when = meeting_text(self.event, now)
         self.when.setText(f"📅  MEETING {when.upper()}")
+        left = countdown(self.event, now)
+        self.countdown.setText(f"⏱  {left[1:]} since start" if left.startswith("-") else f"⏱  {left}")
+        self.countdown.setProperty("late", left.startswith("-"))
+        self.countdown.style().polish(self.countdown)
 
     def follow(self, buddy):
         if self.isVisible():

@@ -243,7 +243,7 @@ better or worse.*
 
 ## Meeting briefings
 
-With a meeting's first reminder (10 minutes before), Buddy looks for anything related he
+With a meeting's first reminder (15 minutes before), Buddy looks for anything related he
 already knows: minutes of earlier meetings with a similar title (recurring meetings keep
 their name; generic words like "weekly" or "sync" don't count) and facts you asked him to
 remember. If there's something, Claude writes one or two sentences, shown on the meeting
@@ -272,6 +272,20 @@ He says it out loud only if you haven't touched the keyboard or mouse for 20 sec
 (you're not looking) and you're not on a call. The hook always exits 0 in ~30 ms, and does
 nothing if Buddy isn't running, so it can't slow down or break Claude Code. Change the
 threshold with `BUDDY_CLAUDE_LONG_TASK` (seconds); remove the hooks with `/hooks`.
+
+### Coding by voice
+
+*"Hey Buddy, in desktop buddy, add a dark mode to the chat panel and run the tests."* The
+assistant finds the project folder (folders under your home directory with `.git`,
+`package.json`, `pyproject.toml`…) and puts the task on a card: **🧑‍💻 Run with Claude
+Code?**, with the folder and the task exactly as it will be sent. Nothing runs until you
+say *"yes"* or click **Run**. Then VS Code opens on the folder, and Claude Code works
+headless (`claude -p`, `bypassPermissions`: it can edit files and run any command). The
+card lists each step (📖 reading, ✏️ editing, ▶ running…), **Stop** ends it, and Buddy
+says a one-line summary when it's done. A task in the same folder within an hour
+continues that session, so *"now commit it"* knows what "it" is. Also: *"open the
+portfolio in VS Code"*, *"how's it going?"*. Code lives in `services/code_tasks.py` and
+`ui/code_task.py`. The task runs inside Buddy's service, so restarting Buddy stops it.
 
 ## Minutes of meeting
 
@@ -317,14 +331,16 @@ option if that is appropriate for your calendar. Some organizations disable
 calendar publishing. No Microsoft password is requested. This is an ICS feed
 integration, not a Microsoft account sign-in or mailbox connection.
 
-Buddy fetches the feed on launch and every five minutes; **Sync calendar now**
+Buddy fetches the feed on launch and every two minutes; **Sync calendar now**
 refreshes it immediately. The menu shows the last successful sync or an error. If a sync
 fails, the meetings from the last good sync are kept, so a brief network drop doesn't
-lose reminders.
+lose reminders. A meeting that shows up in a sync and starts within the next hour gets a
+**New meeting** heads-up right away. Outlook itself can take a few minutes to publish a
+meeting you just created.
 
 ### How you're reminded
 
-Reminders start **10 minutes before** each meeting and **repeat every 2 minutes**, plus once
+Reminders start **15 minutes before** each meeting and **repeat every 2 minutes**, plus once
 exactly at the start, until you press **Join meeting** (or **Open in Outlook**) or
 **Dismiss**. If you haven't acknowledged by then, they keep coming for up to 10 minutes
 after the start, or until the meeting ends. Closing a notification with its ✕ doesn't
