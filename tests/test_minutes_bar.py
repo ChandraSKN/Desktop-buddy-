@@ -1,6 +1,7 @@
 """The minutes flow in the real window, with a fake recorder and a fake Claude."""
 
 import json
+import wave
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -18,8 +19,9 @@ WORDS = "we agreed to ship the new dashboard next friday and ravi will write the
 class FakeRecorder:
     """Writes a transcript instead of audio, so the pipeline runs without a microphone."""
 
-    def __init__(self, root):
+    def __init__(self, root, screen=False):
         self.root, self.recording, self.started, self.folder = Path(root), False, None, None
+        self.screen, self.screen_state = screen, {}
 
     def start(self, title, event=None, now=None):
         self.started = datetime.now(UTC)
@@ -27,11 +29,16 @@ class FakeRecorder:
         self.folder.mkdir(parents=True, exist_ok=True)
         (self.folder / "meta.json").write_text(json.dumps(
             {"title": title, "recorded_from": self.started.isoformat()}))
-        (self.folder / "mic.wav").write_bytes(b"RIFF")
+        with wave.open(str(self.folder / "mic.wav"), "wb") as w:      # 2 s of silence
+            w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000)
+            w.writeframes(b"\0" * 64000)
         self.recording = True
 
     def failed(self):
         return None
+
+    def follow_call(self):
+        return []
 
     def stop(self, now=None):
         self.recording = False
@@ -53,7 +60,6 @@ def fake_minutes(segments, title, preferences=(), client=None):
 def buddy(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(Buddy, "sync_calendar", lambda self: None)
     monkeypatch.setattr(minutes_bar, "Recorder", FakeRecorder)
-    monkeypatch.setattr(minutes_bar, "MINUTES_DIR", str(tmp_path / "minutes"))
     monkeypatch.setattr(minutes_bar, "RECORDINGS_DIR", str(tmp_path / "recordings"))
     monkeypatch.setattr(minutes_mod, "write_minutes", fake_minutes)
     monkeypatch.setattr(minutes_bar, "other_apps_using_mic", lambda: [])
@@ -94,7 +100,9 @@ def test_record_stop_and_get_minutes(buddy, qtbot, tmp_path):
     md = Path(buddy.minutes.result_path).read_text()
     assert "# Minutes: Dashboard sync" in md and "**Ravi**: Write the release notes" in md
     assert buddy.memory.search_minutes("dashboard")[0].title == "Dashboard sync"
-    assert not list((tmp_path / "recordings").glob("*/mic.wav"))     # audio deleted afterwards
+    folder = Path(buddy.minutes.result_path).parent
+    assert folder.parent == tmp_path / "recordings"               # one folder per meeting
+    assert (folder / "audio.ogg").exists() and not (folder / "mic.wav").exists()
 
 
 def test_recording_stops_itself_after_the_meeting(buddy, qtbot):
@@ -138,6 +146,15 @@ def test_too_little_speech_gives_no_minutes(buddy, qtbot, tmp_path):
     now = datetime.now(UTC).isoformat()
     (folder / "meta.json").write_text(json.dumps({"title": "Quiet", "recorded_from": now, "recorded_to": now}))
     (folder / "transcript.json").write_text(json.dumps([{"start": 0, "end": 1, "speaker": "You", "text": "hi"}]))
+    (folder / "mic.wav").write_bytes(b"RIFF")
+    meta = json.loads((folder / "meta.json").read_text())
+    meta["sound_seconds"] = {"mic.wav": 47, "others.wav": 0}
+    (folder / "meta.json").write_text(json.dumps(meta))
     buddy.minutes.resume_pending()
     qtbot.waitUntil(lambda: buddy.minutes.state == "error", timeout=5000)
-    assert "Hardly anything" in buddy.minutes.note.text()
+    note = buddy.minutes.note.text()
+    assert "hardly heard anyone" in note and "your mic: 0 min 47 s" in note and "the others: 0 min 0 s" in note
+    assert (folder / "mic.wav").exists()                      # kept, to check what went wrong
+    buddy.minutes.worker and qtbot.waitUntil(lambda: buddy.minutes.worker is None, timeout=5000)
+    buddy.minutes.resume_pending()                             # and not retried every start
+    assert buddy.minutes.worker is None

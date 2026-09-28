@@ -77,12 +77,21 @@ def test_minutes_are_searchable_and_fall_back_to_recent():
     assert store.search_minutes("?")[0].title == "Standup"           # newest first
 
 
-def test_minutes_saved_next_to_a_marker(tmp_path):
+def test_minutes_saved_in_the_meetings_own_folder(tmp_path):
     folder = tmp_path / "2026-09-27 2030 Sync"
     folder.mkdir()
-    path = minutes_mod.save("# m", folder, {}, tmp_path / "out")
-    assert path.read_text() == "# m"
+    path = minutes_mod.save("# m", folder)
+    assert path == folder / "minutes.md" and path.read_text() == "# m"
+    assert not (folder / "minutes.json").exists()          # done only once the recording is saved
+    minutes_mod.mark_done(folder, path)
     assert json.loads((folder / "minutes.json").read_text())["path"] == str(path)
+
+
+def test_transcript_uses_names_seen_on_screen():
+    from deskbuddy.services.transcribe import as_text
+    text = as_text([{"start": 3, "end": 5, "speaker": "Others", "name": "Rahul Sharma", "text": "Hi"},
+                    {"start": 6, "end": 7, "speaker": "Others", "text": "Hello"}])
+    assert "Rahul Sharma: Hi" in text and "Others: Hello" in text
 
 
 def test_hallucinated_and_silent_segments_are_dropped():

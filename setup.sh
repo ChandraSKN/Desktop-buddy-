@@ -11,6 +11,8 @@ python3 -m venv .venv
 .venv/bin/pip install --upgrade pip -q
 echo "==> Installing dependencies (PyQt6, anthropic, Pillow)"
 .venv/bin/pip install -q -r requirements.txt
+.venv/bin/pip uninstall -y -q opencv-python 2>/dev/null || true
+.venv/bin/pip install -q --force-reinstall --no-deps opencv-python-headless
 
 echo "==> Writing launcher entry"
 chmod +x run.sh

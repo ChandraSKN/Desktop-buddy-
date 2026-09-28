@@ -126,3 +126,49 @@ def test_telugu_speech_reaches_the_assistant_with_its_language(qtbot, monkeypatc
     b.on_heard("When is my next meeting?", "te")
     qtbot.waitUntil(lambda: bool(got), timeout=3000)
     assert got == [("When is my next meeting?", "te")]
+
+
+class FakeModel:
+    def __init__(self, lines, language="en"):
+        self.lines, self.language, self.calls = lines, language, []
+
+    def transcribe(self, audio, **kw):
+        from types import SimpleNamespace as NS
+        self.calls.append(kw)
+        segs = [NS(start=i * 3.0, end=i * 3.0 + 2, text=t, compression_ratio=1.5, no_speech_prob=0.05,
+                   avg_logprob=-0.3) for i, t in enumerate(self.lines)]
+        return iter(segs), NS(language=self.language)
+
+
+def _meeting(tmp_path):
+    import wave
+    with wave.open(str(tmp_path / "others.wav"), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(b"\0\0" * 16000 * 3)
+    return tmp_path
+
+
+def test_english_meetings_stay_on_the_small_model(tmp_path):
+    from deskbuddy.services.transcribe import transcribe_folder
+    small = FakeModel(["The launch is next Friday.", "Priya sends the notes."])
+    out = transcribe_folder(_meeting(tmp_path), models={"small": small,
+                                                        "telugu": lambda: pytest.fail("not needed")})
+    assert [s["text"] for s in out] == ["The launch is next Friday.", "Priya sends the notes."]
+
+
+def test_telugu_in_a_meeting_switches_the_track_to_the_telugu_model(tmp_path):
+    from deskbuddy.services.transcribe import transcribe_folder
+    small = FakeModel(["Okay, let's start.", "ना तरवाती मीटिं एपडू"])                    # Telugu, mangled
+    turbo = FakeModel(["Okay, let's start.", "Ravi export bugs budhavaram lopu fix chesthadu."])
+    out = transcribe_folder(_meeting(tmp_path), models={"small": small, "telugu": lambda: turbo})
+    assert out[1]["text"] == "Ravi export bugs budhavaram lopu fix chesthadu."
+    assert turbo.calls[0]["language"] == "te"
+
+
+def test_a_meeting_detected_as_telugu_switches_even_if_it_looks_latin(tmp_path):
+    from types import SimpleNamespace as NS
+
+    from deskbuddy.services.transcribe import has_telugu_signs
+    latin = [NS(text="Repu udayam padi gantalaki", compression_ratio=1.4, no_speech_prob=0.1, avg_logprob=-0.3)]
+    assert has_telugu_signs(latin, "te") and not has_telugu_signs(latin, "en")
+    noise = [NS(text="ლ ლ ლ ლ ლ", compression_ratio=14.9, no_speech_prob=0.3, avg_logprob=-0.1)]
+    assert not has_telugu_signs(noise, "ka")                       # a noisy mic track stays on small

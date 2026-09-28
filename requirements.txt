@@ -8,3 +8,9 @@ faster-whisper>=1.1,<2
 piper-tts>=1.3,<2
 neonize>=0.5
 segno>=1.6
+
+# meeting screen recording + who-is-speaking (see setup.sh: rapidocr pulls the GUI OpenCV,
+# whose bundled Qt clashes with PyQt6, so it's swapped for the headless build)
+jeepney>=0.9
+opencv-python-headless>=4.9
+rapidocr-onnxruntime>=1.4

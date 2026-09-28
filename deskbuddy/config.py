@@ -42,10 +42,13 @@ MEMORY_DB = os.environ.get("BUDDY_MEMORY_DB",
 WHATSAPP_DB = os.environ.get("BUDDY_WHATSAPP_DB",
                              str(Path.home() / ".local" / "share" / "desktop-buddy" / "whatsapp.db"))
 
-# minutes of meeting
-RECORDINGS_DIR = os.environ.get("BUDDY_RECORDINGS_DIR",
-                                str(Path.home() / ".local" / "share" / "desktop-buddy" / "recordings"))
+# minutes of meeting: one folder per meeting in MINUTES_DIR, holding the recording (audio +
+# screen video), the transcript and minutes.md. RECORDINGS_DIR is the same folder unless a
+# test moves it.
 MINUTES_DIR = os.environ.get("BUDDY_MINUTES_DIR", str(Path.home() / "Documents" / "Meeting Minutes"))
+RECORDINGS_DIR = os.environ.get("BUDDY_RECORDINGS_DIR", MINUTES_DIR)
+# screen recording alongside the audio (to see who is speaking); BUDDY_SCREEN=0 turns it off
+SCREEN = os.environ.get("BUDDY_SCREEN", "1") != "0"
 STOP_AFTER_END = 10 * 60        # still recording this long after the meeting's end: stop
 MAX_RECORDING = 4 * 60 * 60     # hard limit, in case the end is unknown
 MIC_CHECK_EVERY = 20            # seconds between "is another app using the mic?" checks

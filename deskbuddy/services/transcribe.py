@@ -11,11 +11,13 @@ The multilingual model handles Telugu/Hindi/English code-switching (language is 
 per segment). Without a headset your mic also hears the other people through the speakers,
 so a mic segment that repeats an overlapping "Others" segment is dropped as echo.
 
-Telugu: in a mostly-English meeting Whisper writes Telugu speech in English letters
-("Ravi export bugs Budawaram lopu fix chesthadu"), which keeps names and Claude reads well.
-When it decides a stretch *is* Telugu it either gets stuck repeating syllables in Telugu
-script or writes the sounds in another script (Devanagari); such a stretch is re-run as an
-English translation (marked "(translated)") instead of being dropped or kept unreadable.
+Telugu: each track is first transcribed with "small". If that shows any Telugu (a stretch
+in a non-Latin script, stuck repeating, or a non-English language), the whole track is
+redone with "large-v3-turbo" told the language is Telugu. Measured on a 2-minute mixed
+English/Telugu meeting: small alone lost half of it (whole stretches dropped); turbo with
+Telugu forced covered nearly all of it, kept English as English, wrote Telugu as spoken
+("Ravi export bugs budhavaram lopu fix chesthadu") with names intact, at ~0.6x real time
+and ~3.5 GB of memory. English-only meetings never pay that cost.
 
 Decoding runs once per segment (temperature 0). Whisper's default retries at higher
 temperatures made a quiet, noisy mic track take 6x longer and then threw the result away;
@@ -28,6 +30,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 
 MODEL = "small"                # multilingual; ~460 MB, downloaded once to ~/.cache/huggingface
+TELUGU_MODEL = "large-v3-turbo"  # ~1.6 GB, downloaded the first time a meeting has Telugu
 THREADS = 4                    # leave the rest of the CPU for the user
 SPEAKERS = {"mic.wav": "You", "others.wav": "Others"}
 
@@ -84,43 +87,62 @@ def merge(tracks):
 def as_text(segments):
     def stamp(t):
         return f"{int(t // 3600):d}:{int(t // 60 % 60):02d}:{int(t % 60):02d}"
-    return "\n".join(f"[{stamp(s['start'])}] {s['speaker']}: {s['text'].strip()}" for s in segments)
+    return "\n".join(f"[{stamp(s['start'])}] {s.get('name') or s['speaker']}: {s['text'].strip()}"
+                     for s in segments)
 
 
-def _translate(model, audio, start, end):
-    """English translation of audio[start:end] (seconds), or None."""
-    clip = audio[int(start * 16000):int(end * 16000)]
-    if len(clip) < 8000:
-        return None
-    segments, _ = model.transcribe(clip, task="translate", condition_on_previous_text=False, temperature=0.0)
-    text = " ".join(s.text.strip() for s in segments if looks_real(s))
-    return f"(translated) {text}" if text else None
+INDIAN = {"te", "ta", "kn", "ml", "hi", "mr", "bn", "gu", "pa", "ur"}   # Telugu is often detected as these
 
 
-def transcribe_folder(folder, report=lambda p: None):
+def has_telugu_signs(segments, language):
+    """Did the first pass meet Telugu? Real speech written in a non-Latin script, an Indian
+    language detected alongside real speech, or several stuck-repeating stretches. A
+    background-noise track (one garbage segment, some random "language") doesn't count."""
+    real = [s for s in segments if looks_real(s)]
+    return (any(not mostly_latin(s.text) for s in real)
+            or (bool(real) and language in INDIAN)
+            or sum(is_loop(s) for s in segments) >= 2)
+
+
+def _pass(model, audio, **kw):
+    segments, info = model.transcribe(audio, vad_filter=True, condition_on_previous_text=False,
+                                      temperature=0.0, **kw)
+    return list(segments), info.language
+
+
+def transcribe_folder(folder, report=lambda p: None, models=None):
+    """models: {"small": model, "telugu": () -> model} to replace the real ones in tests."""
     from faster_whisper import WhisperModel
     from faster_whisper.audio import decode_audio
 
     folder = Path(folder)
     files = [f for f in SPEAKERS if duration(folder / f) > 1.0]
     total = sum(duration(folder / f) for f in files) or 1.0
-    model = WhisperModel(MODEL, device="cpu", compute_type="int8", cpu_threads=THREADS)
+    models = models or {}
+    small = models.get("small") or WhisperModel(MODEL, device="cpu", compute_type="int8", cpu_threads=THREADS)
+    telugu = []
+
+    def telugu_model():
+        if not telugu:
+            telugu.append(models["telugu"]() if "telugu" in models else
+                          WhisperModel(TELUGU_MODEL, device="cpu", compute_type="int8", cpu_threads=THREADS))
+        return telugu[0]
+
     done, tracks = 0.0, {}
     for name in files:
         audio = decode_audio(str(folder / name))
-        segments, _ = model.transcribe(audio, vad_filter=True, multilingual=True,
-                                       condition_on_previous_text=False, temperature=0.0)
-        out = []
-        for seg in segments:
-            report(min(0.99, (done + seg.end) / total))
-            text = seg.text.strip() if looks_real(seg) and mostly_latin(seg.text) else None
-            if text is None and (is_loop(seg) or looks_real(seg)):
-                text = _translate(model, audio, seg.start, seg.end)
-            if text:
-                out.append({"start": round(seg.start, 2), "end": round(seg.end, 2),
-                            "speaker": SPEAKERS[name], "text": text})
-        done += duration(folder / name)
-        tracks[SPEAKERS[name]] = out
+        length = duration(folder / name)
+        report(min(0.99, done / total))
+        segments, language = _pass(small, audio, multilingual=True)
+        if has_telugu_signs(segments, language):
+            report(min(0.99, (done + length / 3) / total))
+            # greedy decoding: beam search dropped the mixed English/Telugu sentences (measured)
+            segments, _ = _pass(telugu_model(), audio, language="te", beam_size=1)
+        tracks[SPEAKERS[name]] = [
+            {"start": round(seg.start, 2), "end": round(seg.end, 2), "speaker": SPEAKERS[name],
+             "text": seg.text.strip()} for seg in segments if looks_real(seg)]
+        done += length
+        report(min(0.99, done / total))
     result = merge(tracks)
     (folder / "transcript.json").write_text(json.dumps(result, ensure_ascii=False, indent=0))
     return result

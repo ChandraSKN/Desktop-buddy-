@@ -17,10 +17,12 @@ MIN_WORDS = 25                 # less than this and there's nothing to write min
 
 SYSTEM = """You write minutes of meeting from a transcript.
 
-The transcript has two speaker labels: "You" is the person the minutes are for (they were \
-recorded from their microphone); "Others" is everyone else on the call (one mixed track, \
-so individual people aren't separated). Use names only when the transcript makes clear \
-who someone is (e.g. "Ravi, can you…"); otherwise say "You" or "the team".
+Speaker labels: "You" is the person the minutes are for (recorded from their microphone). \
+Other people are labelled with their name when Buddy could see it on screen (Teams \
+highlights whoever is talking; the name was read from their video tile, so it can be \
+slightly misspelt or occasionally wrong), or "Others" when it couldn't tell. Use those names \
+for owners and in the summary; otherwise use names only when the transcript makes clear \
+who someone is (e.g. "Ravi, can you…") and say "You" or "the team".
 
 The speech-to-text is imperfect and the meeting may mix English with Telugu or Hindi. \
 Write the minutes in clear English. Translate non-English parts; silently fix obvious \
@@ -96,10 +98,13 @@ def render(minutes, meta, segments):
     return "\n".join(lines)
 
 
-def save(markdown, folder, meta, out_dir):
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"{Path(folder).name}.md"
+def save(markdown, folder):
+    """minutes.md next to the meeting's recording. (minutes.json, the "done" marker, is
+    written by the caller once the recording files are finished too.)"""
+    path = Path(folder) / "minutes.md"
     path.write_text(markdown)
-    (Path(folder) / "minutes.json").write_text(json.dumps({"path": str(path)}))
     return path
+
+
+def mark_done(folder, path):
+    (Path(folder) / "minutes.json").write_text(json.dumps({"path": str(path)}))
