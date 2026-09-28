@@ -1,5 +1,5 @@
 """Tunables in one place. Timings can be overridden with environment variables so a demo
-doesn't have to wait ten minutes, e.g. `BUDDY_SIT_AFTER=30 ./run.sh`."""
+doesn't have to wait, e.g. `BUDDY_SIT_AFTER=30 ./run.sh`."""
 
 import os
 from pathlib import Path

@@ -65,7 +65,7 @@ the window underneath.
 
 ### Taking a seat
 
-If you don't click him for **10 minutes**, he pulls up a wooden chair from his right, drags
+If you don't click him for **1 minute**, he pulls up a wooden chair from his right, drags
 it behind him and sits down, looking around now and then. Any click, a reminder, or you
 coming back to the computer makes him stand up and push the chair away (a left click still
 opens the correction panel). To see it sooner: `BUDDY_SIT_AFTER=30 .venv/bin/python buddy.py`.
