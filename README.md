@@ -9,20 +9,25 @@ desktop notifications, wellness nudges, and a text fixer.
 
 ```bash
 ./setup.sh
-./run.sh
 ```
+
+That's the whole install (Ubuntu/Debian with GNOME): system packages, Python packages,
+voices, speech models, the app-menu entry, the `buddy` command, Claude Code hooks, and a
+background service that starts Buddy at every login. It's safe to run again at any time,
+and it finishes with `buddy doctor`, which lists anything still missing and how to fix it.
+Options: `--no-autostart` (start him yourself with `./run.sh`), `--no-apt` (no sudo).
+
+Moving to a new computer? See [Moving to another computer](#moving-to-another-computer).
 
 ### Runs automatically in the background
 
-`./setup.sh --autostart` installs Buddy as a **systemd user service**
-(`~/.config/systemd/user/desktop-buddy.service`, a copy of `desktop-buddy.service` here):
+The service is `~/.config/systemd/user/desktop-buddy.service`, made by setup.sh from the
+`desktop-buddy.service` template here (`@DIR@` becomes this folder's path):
 
 - starts automatically every time you log in, with no terminal needed
 - restarts itself within 5 seconds if it ever crashes, or if the display isn't ready yet
   at login
 - **right-click → Quit** stops it until your next login (or `./run.sh`)
-
-This is already installed and enabled on this laptop.
 
 | Task | Command |
 |---|---|
@@ -377,6 +382,62 @@ The URL is saved locally in Qt settings at
 Calendar contents are held in memory. Disconnecting clears fetched events.
 See Microsoft's [calendar sharing instructions](https://support.microsoft.com/en-us/outlook/share-your-calendar-in-outlook-com).
 
+## Moving to another computer
+
+The **code** lives in git (GitHub); your **data** lives outside this folder. Moving is
+three commands on each side.
+
+**On the old computer**
+
+```bash
+git status                      # anything uncommitted? commit it, then:
+git push
+scripts/backup.sh               # -> ~/desktop-buddy-backup-<date>.tar.gz
+```
+
+The backup holds your API key, Outlook calendar link, Buddy's memory (facts, reminders,
+the minutes index) and `~/Documents/Meeting Minutes`. It contains secrets, so copy it
+privately (USB stick or `scp`, not email or a shared drive). Add `--with-whatsapp` to
+bring the WhatsApp link too; otherwise just re-link on the new computer.
+
+**On the new computer**
+
+```bash
+git clone https://github.com/ChandraSKN/Desktop-buddy-.git ~/desktop-buddy
+cd ~/desktop-buddy
+./setup.sh                                          # installs everything, starts Buddy
+scripts/restore.sh ~/desktop-buddy-backup-<date>.tar.gz
+buddy doctor                                        # everything ✓?
+```
+
+The folder can live anywhere and the user name can differ: setup.sh points the service,
+the app menu, the `buddy` command and the Claude Code hooks at wherever you cloned it.
+Run it again if you ever move the folder.
+
+**Then, once, by hand**
+
+| What | Why it isn't copied | How |
+|---|---|---|
+| Claude Code | a separate app | `curl -fsSL https://claude.ai/install.sh \| bash`, log in, then `buddy install-hooks` |
+| WhatsApp (if not backed up) | a linked device belongs to one computer | right-click Buddy → Link WhatsApp… → scan the QR code |
+| Screen-share permission | GNOME grants it per computer | asked on the first recorded meeting; pick the screen and tick "remember" |
+| Microphone level | depends on the mic | if "Hey Buddy" is slow or the log says *microphone is far too loud*: `wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.20` |
+
+A different API key on the new computer? Put it in `~/.config/desktop-buddy/api_key`
+(`chmod 600`). A different calendar? Right-click → Connect Outlook calendar….
+
+| Where | What | Carried by |
+|---|---|---|
+| this folder | code, 3D model, animation frames | git |
+| `~/.config/desktop-buddy/api_key` | Claude API key | backup.sh |
+| `~/.config/DesktopBuddy/DesktopBuddy.conf` | settings, calendar link | backup.sh |
+| `~/.local/share/desktop-buddy/memory.db` | memory, reminders, minutes index | backup.sh |
+| `~/Documents/Meeting Minutes/` | minutes, transcripts, recordings | backup.sh |
+| `~/.local/share/desktop-buddy/whatsapp.db` | WhatsApp link | backup.sh `--with-whatsapp` |
+| `~/.local/share/desktop-buddy/voices/`, `~/.cache/huggingface/` | voices, speech models | setup.sh downloads |
+| `~/.config/systemd/user/`, `~/.local/bin/buddy`, `~/.claude/settings.json` hooks | how Buddy is started and reached | setup.sh |
+| `~/.config/desktop-buddy/screencast_token` | screen-share permission | asked again |
+
 ## Paragraph correction
 
 `deskbuddy/services/corrector.py` tries, in order:
@@ -470,7 +531,8 @@ deskbuddy/
   ipc.py, cli.py          the local socket protocol and the `buddy` command
   ui/                     buddy_window, assistant_panel, minutes_bar, voice,
                           command_server, bubble, meeting_card, corrector_panel, styles
-bin/buddy                 launcher for the `buddy` command
+bin/buddy                 launcher for the `buddy` command (doctor.py: `buddy doctor`)
+scripts/                  backup.sh / restore.sh: carry your data to another computer
 blender/                  model build + render + pack scripts, buddy_model.blend
 tests/                    pytest; test_window.py drives the real window off-screen
 ```
@@ -478,7 +540,7 @@ tests/                    pytest; test_window.py drives the real window off-scre
 ```bash
 .venv/bin/pip install -r requirements-dev.txt   # pytest, pytest-qt, ruff
 .venv/bin/ruff check .                          # lint
-.venv/bin/pytest                                # 163 tests, ~9 s, no display, mic or network
+.venv/bin/pytest                                # ~260 tests, ~25 s, no display, mic or network
 systemctl --user kill --kill-whom=main -s USR1 desktop-buddy     # print the running buddy's state…
 journalctl --user -u desktop-buddy -n 1         # …and read it
 ```

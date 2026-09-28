@@ -1,7 +1,8 @@
+# Template: setup.sh fills in @DIR@ and installs it to ~/.local/share/applications/
 [Desktop Entry]
 Type=Application
 Name=Desktop Buddy
 Comment=Desktop companion with meeting reminders and a text fixer
-Exec=/home/tst-017-lenovo/Documents/chandra/desktop-buddy/run.sh
-Icon=/home/tst-017-lenovo/Documents/chandra/desktop-buddy/assets/icon.png
+Exec=@DIR@/run.sh
+Icon=@DIR@/assets/icon.png
 X-GNOME-Autostart-enabled=true

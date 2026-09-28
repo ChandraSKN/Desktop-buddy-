@@ -6,6 +6,8 @@
     buddy show film                     play an animation for a while (film, write)
     buddy status                        what he's doing
     buddy claude-hook                   used by Claude Code hooks (reads JSON on stdin)
+    buddy doctor                        check this computer has everything Buddy needs
+    buddy install-hooks                 connect Claude Code's hooks to Buddy
 
 Exit status 3 means Buddy isn't running."""
 
@@ -32,7 +34,17 @@ def main(argv=None):
     show.add_argument("--seconds", type=float, default=8)
     sub.add_parser("status", help="print what Buddy is doing")
     sub.add_parser("claude-hook", help="for Claude Code hooks: reads the event JSON on stdin")
+    sub.add_parser("doctor", help="check this computer has everything Buddy needs")
+    sub.add_parser("install-hooks", help="connect Claude Code's hooks to Buddy")
     args = parser.parse_args(argv)
+
+    if args.command == "doctor":
+        from . import doctor
+        return doctor.run()
+    if args.command == "install-hooks":
+        from . import doctor
+        print(f"Claude Code hooks installed in {doctor.install_hooks()}")
+        return 0
 
     if args.command == "claude-hook":
         run_hook(sys.stdin.read(), ipc.send)
