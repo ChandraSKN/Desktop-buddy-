@@ -46,6 +46,12 @@ side-swept black hair, moustache, light beard, broad shoulders, dark suit, open-
 white shirt, belt and dress shoes. The app plays frames pre-rendered from it: a 16-frame
 walk and an idle pose at 7 turn angles, a 12-frame wave at 5 angles, and the chair sequence.
 
+When he starts (after you log in, or `./run.sh`) he doesn't just pop up: he steps out from
+behind the right edge of the screen, walks to his spot, turns to you, waves and says good
+morning / afternoon / evening. Anything he had to tell you meanwhile (the calendar, a
+reminder) comes after the greeting; a click or a due meeting brings him home at once.
+`BUDDY_ENTRANCE=0` skips the walk-in.
+
 ![Blender model: idle, walking sideways, walking toward you, waving](docs/blender-model.png)
 
 Only the character's own pixels catch the mouse: clicks on the empty space around him go to

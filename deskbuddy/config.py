@@ -23,6 +23,11 @@ WALK_SPEED = 75          # px per second when roaming
 DOCK_SPEED = 24          # px per second for the small steps while docked
 STEP_RATE = 7.0          # radians of walk-cycle per second
 
+# arriving: on start he walks in from the right edge of the screen, then turns and greets
+# you, instead of just appearing. BUDDY_ENTRANCE=0 skips it (tests do).
+ENTRANCE = os.environ.get("BUDDY_ENTRANCE", "1") != "0"
+ENTRANCE_DELAY = 1.2     # seconds after start, so the desktop has settled after login
+
 # the chair
 SIT_AFTER = _seconds("BUDDY_SIT_AFTER", 1 * 60)   # no clicks for this long: he sits down
 CHAIR_PAD = 90           # extra window width on his right (screen-left) while the chair is out

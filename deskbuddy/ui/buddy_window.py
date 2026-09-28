@@ -17,6 +17,8 @@ from ..config import (
     AWAY_AFTER,
     CHAIR_PAD,
     DOCK_SPEED,
+    ENTRANCE,
+    ENTRANCE_DELAY,
     FPS,
     HOVER_HOLD,
     MEMORY_DB,
@@ -63,6 +65,17 @@ from .voice import ListenerThread, Speaker
 from .whatsapp import DraftCard, LinkDialog, WhatsAppLink
 
 
+def greeting(hour):
+    """What he says when he arrives, by the time of day."""
+    if 5 <= hour < 12:
+        return "Good morning! ☀️ Click me if you need anything."
+    if 12 <= hour < 17:
+        return "Good afternoon! Click me if you need anything."
+    if 17 <= hour < 22:
+        return "Good evening! Click me if you need anything."
+    return "Hi! Working late? 🌙 I'm here if you need me."
+
+
 class Buddy(QWidget):
     def __init__(self):
         super().__init__(None, Qt.WindowType.FramelessWindowHint
@@ -101,6 +114,13 @@ class Buddy(QWidget):
         self.last_click = time.monotonic()
         self.pad = 0             # window grows to the left while the chair is out
         self.chair = None        # ChairScene while pulling up / sitting / standing
+        # Walking in at start: how far right of home he's drawn (px), None once he's home.
+        # Anything he'd say on the way waits until he has greeted you.
+        self.entering = WIN_W * 0.7 if ENTRANCE else None      # just behind the screen edge
+        self.enter_at = time.monotonic() + ENTRANCE_DELAY
+        self.held_bubbles = []
+        if ENTRANCE:
+            self.yaw = -0.95     # side-on, walking left
 
         self.memory = MemoryStore(MEMORY_DB)
         self.launcher = Launcher()
@@ -168,7 +188,8 @@ class Buddy(QWidget):
         self.timer = QTimer(self, timeout=self.tick)
         self.timer.start(int(1000 / FPS))
         self.move(int(self.fx), int(self.fy))
-        after(self, 800, lambda: self.say("Hi! Click me and ask me anything ✨", 4500))
+        if not ENTRANCE:
+            after(self, 800, self.greet)
 
     # ---- placement ------------------------------------------------------------
     def update_geometry(self, initial=False):
@@ -176,6 +197,7 @@ class Buddy(QWidget):
         self.floor_y = screen.bottom() - self.height() + 4      # shoes rest on the taskbar/dock
         self.min_x = screen.left() + 8
         self.max_x = max(self.min_x, screen.right() - WIN_W + 20)
+        self.screen_right = screen.right()
         if initial:
             self.fx = float(self.max_x)
         else:
@@ -609,7 +631,9 @@ class Buddy(QWidget):
             self.chair = chair.ChairScene(now)
 
     def stand_up(self):
-        """Get up and put the chair away, reversing from wherever he is in the sequence."""
+        """Get up and put the chair away, reversing from wherever he is in the sequence.
+        (Still walking in? A click or a reminder brings him straight home.)"""
+        self.arrive()
         now = time.monotonic()
         self.last_click = now
         if self.chair is not None and not self.chair.leaving:
@@ -629,6 +653,35 @@ class Buddy(QWidget):
         self.say(f"Welcome back! You were away {minutes} min." if minutes >= 1 else "Welcome back!",
                  4000)
         self.wave(3)
+
+    # ---- arriving ---------------------------------------------------------------
+    def walk_in(self, now, dt):
+        """At start he steps out from behind the right edge of the screen and walks home."""
+        if now < self.enter_at:
+            return
+        self.state, self.facing = "walk", -1
+        self.entering = max(0.0, self.entering - WALK_SPEED * dt)
+        self.phase += STEP_RATE * dt
+        if self.entering == 0:
+            self.arrive()
+
+    def arrive(self):
+        """Home: turn to face you, then wave and say hello."""
+        if self.entering is None:
+            return
+        self.entering = None
+        now = time.monotonic()
+        self.state, self.state_until, self.facing = "idle", now + random.uniform(6, 10), -1
+        self.last_click = now
+        after(self, 450, self.greet)          # once he has turned to face you
+
+    def greet(self):
+        self.say(greeting(datetime.now().hour), 4500)
+        self.wave(3)
+        delay, held, self.held_bubbles = 4700, self.held_bubbles, []
+        for text, ms in held:                 # e.g. "Calendar connected…", one after another
+            after(self, delay, lambda t=text, m=ms: self.say(t, m))
+            delay += ms + 300
 
     # ---- behaviour ------------------------------------------------------------
     def frozen(self):
@@ -686,7 +739,9 @@ class Buddy(QWidget):
         self._last = now
         self.breath += dt * 2.2
 
-        if self._drag_offset is not None:
+        if self.entering is not None:
+            self.walk_in(now, dt)
+        elif self._drag_offset is not None:
             pass
         elif self.fy < self.floor_y:                           # dropped from a drag: fall
             self.vy += 2600 * dt
@@ -717,7 +772,8 @@ class Buddy(QWidget):
                 else self.phase + STEP_RATE * dt
 
         moving = self.state == "walk" and not self.frozen()
-        target_yaw = self.facing * (0.35 if self.docked else 0.95) if moving else -0.22
+        side_on = not self.docked or self.entering is not None
+        target_yaw = self.facing * (0.95 if side_on else 0.35) if moving else -0.22
         if not moving and not self.frozen():
             target_yaw += math.sin(self.breath * 0.45) * 0.09
         self.yaw += (target_yaw - self.yaw) * min(1.0, dt * 5)
@@ -747,8 +803,13 @@ class Buddy(QWidget):
                                  self.breath, self.pad + WIN_W / 2)
         else:
             wave_t = time.monotonic() - self.wave_start if self.wave_start is not None else None
+            if self.entering is not None:
+                # nothing is drawn past the screen's right edge, so he steps out from behind
+                # it (and never shows up on a monitor to the right)
+                p.setClipRect(0, 0, self.screen_right - self.x() + 1, self.height())
             model3d.draw_model(p, self.width(), self.height(), self.phase, walking, self.breath,
-                               self.yaw, wave_t, self.pad + WIN_W / 2, self.speaker.mouth(),
+                               self.yaw, wave_t, self.pad + WIN_W / 2 + (self.entering or 0),
+                               self.speaker.mouth(),
                                self.activity(), time.monotonic())
         p.end()
         self._frame = img
@@ -758,6 +819,8 @@ class Buddy(QWidget):
         if self._mask_tick <= 0 and self._drag_offset is None:
             self._mask_tick = 4
             region = QRegion(QBitmap.fromImage(img.createAlphaMask()))
+            if region.isEmpty():                  # not on screen yet (an empty mask means none)
+                region = QRegion(0, 0, 1, 1)
             grown = QRegion(region)
             for dx, dy in ((-6, 0), (6, 0), (0, -6), (0, 6)):
                 grown = grown.united(region.translated(dx, dy))
@@ -768,6 +831,9 @@ class Buddy(QWidget):
             QPainter(self).drawImage(0, 0, self._frame)
 
     def say(self, text, ms=3000):
+        if self.entering is not None:
+            self.held_bubbles.append((text, ms))
+            return
         self.bubble.show_text(text, ms)
         self.bubble.follow(self)
 

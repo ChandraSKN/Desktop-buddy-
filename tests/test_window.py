@@ -159,3 +159,60 @@ def test_he_films_while_recording_and_writes_while_the_minutes_are_made(buddy, m
     img = buddy._frame
     assert sum(img.pixelColor(x, y).alpha() > 0
                for x in range(0, img.width(), 5) for y in range(0, img.height(), 5)) > 200
+
+
+@pytest.fixture
+def arriving(qtbot, monkeypatch):
+    from deskbuddy.ui import buddy_window
+    monkeypatch.setattr(buddy_window, "ENTRANCE", True)
+    monkeypatch.setattr(buddy_window, "ENTRANCE_DELAY", 0.0)
+    monkeypatch.setattr(Buddy, "sync_calendar", lambda self: None)
+    b = Buddy()
+    qtbot.addWidget(b)
+    b.show()
+    b.calendar_timer.stop()
+    b.reminder_timer.stop()
+    return b
+
+
+def _opaque_columns(img):
+    return [x for x in range(img.width()) if any(img.pixelColor(x, y).alpha() > 0
+                                                 for y in range(0, img.height(), 4))]
+
+
+def test_he_walks_in_from_the_right_edge_then_greets_you(arriving, qtbot):
+    b = arriving
+    b.render_frame()
+    assert not _opaque_columns(b._frame)                  # starts out of sight
+    qtbot.waitUntil(lambda: b.entering is not None and 40 < b.entering < 100, timeout=3000)
+    b.render_frame()
+    cols = _opaque_columns(b._frame)
+    assert cols and max(cols) <= b.screen_right - b.x()   # partly out, cut at the screen edge
+    assert b.state == "walk" and not b.bubble.isVisible()
+    qtbot.waitUntil(lambda: b.entering is None, timeout=4000)
+    assert b.fx == b.max_x                                 # home, where he always stands
+    qtbot.waitUntil(lambda: b.bubble.isVisible(), timeout=2000)
+    assert any(word in b.bubble.text for word in ("Good", "Hi!"))
+    assert b.wave_start is not None
+
+
+def test_what_he_says_on_the_way_in_waits_for_the_greeting(arriving, qtbot):
+    b = arriving
+    b.say("Calendar connected. Next: Standup at 10:00", 6000)
+    assert not b.bubble.isVisible() and b.held_bubbles
+    b.arrive()
+    qtbot.waitUntil(lambda: "Good" in b.bubble.text or "Hi!" in b.bubble.text, timeout=2000)
+    qtbot.waitUntil(lambda: "Calendar connected" in b.bubble.text, timeout=7000)
+
+
+def test_a_click_or_reminder_while_walking_in_brings_him_straight_home(arriving):
+    arriving.stand_up()
+    assert arriving.entering is None and arriving.state == "idle"
+
+
+def test_greeting_follows_the_time_of_day():
+    from deskbuddy.ui.buddy_window import greeting
+    assert greeting(8).startswith("Good morning")
+    assert greeting(14).startswith("Good afternoon")
+    assert greeting(19).startswith("Good evening")
+    assert "late" in greeting(1)
