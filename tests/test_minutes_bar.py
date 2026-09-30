@@ -158,3 +158,22 @@ def test_too_little_speech_gives_no_minutes(buddy, qtbot, tmp_path):
     buddy.minutes.worker and qtbot.waitUntil(lambda: buddy.minutes.worker is None, timeout=5000)
     buddy.minutes.resume_pending()                             # and not retried every start
     assert buddy.minutes.worker is None
+
+
+def test_playable_audio_saved_even_when_transcription_fails(monkeypatch, tmp_path):
+    now = datetime.now(UTC).isoformat()
+    (tmp_path / "meta.json").write_text(json.dumps({"title": "Failed", "recorded_from": now}))
+    with wave.open(str(tmp_path / "mic.wav"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\0" * 64000)
+
+    def fail(self):
+        raise RuntimeError("transcription unavailable")
+
+    monkeypatch.setattr(minutes_bar.MinutesWorker, "_transcript", fail)
+    worker = minutes_bar.MinutesWorker(tmp_path, None)
+    worker.run()
+    assert (tmp_path / "audio.ogg").stat().st_size > 0
+    assert (tmp_path / "mic.wav").exists()

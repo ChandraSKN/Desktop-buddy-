@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -20,13 +21,14 @@ class Worker(QThread):
     done = pyqtSignal(str, list)
     failed = pyqtSignal(str)
 
-    def __init__(self, text):
+    def __init__(self, text, tone="Original"):
         super().__init__()
         self.text = text
+        self.tone = tone
 
     def run(self):
         try:
-            self.done.emit(*corrector.correct(self.text))
+            self.done.emit(*corrector.correct(self.text, self.tone))
         except Exception as e:
             self.failed.emit(friendly_error(e))
 
@@ -73,6 +75,17 @@ class CorrectorPanel(QWidget):
         close = QPushButton("✕", objectName="close", clicked=self.close)
         head.addWidget(close)
         lay.addLayout(head)
+
+        tone_row = QHBoxLayout()
+        tone_label = QLabel("Tone")
+        tone_row.addWidget(tone_label)
+        self.tone = QComboBox()
+        self.tone.addItems(corrector.TONES)
+        self.tone.setAccessibleName("Writing tone")
+        self.tone.setToolTip("Original keeps your tone; other options rewrite the style as well as fixing grammar.")
+        tone_label.setBuddy(self.tone)
+        tone_row.addWidget(self.tone, 1)
+        lay.addLayout(tone_row)
 
         self.input = QPlainTextEdit(placeholderText="Paste the text you want corrected…   (Ctrl+Enter to fix)")
         lay.addWidget(self.input, 3)
@@ -129,11 +142,12 @@ class CorrectorPanel(QWidget):
         if not text or (self.worker and self.worker.isRunning()):
             return
         self.fix_btn.setEnabled(False)
+        self.tone.setEnabled(False)
         self.fix_btn.setText("Thinking…")
         self.status.setText(f"Correcting with {corrector.backend_name()}…")
         self.output.clear()
         self.changes.clear()
-        self.worker = Worker(text)
+        self.worker = Worker(text, self.tone.currentText())
         self.worker.done.connect(self.on_done)
         self.worker.failed.connect(self.on_failed)
         self.worker.start()
@@ -142,6 +156,7 @@ class CorrectorPanel(QWidget):
         self.output.setPlainText(fixed)
         self.changes.setPlainText("\n".join(f"• {c}" for c in changes))
         self.fix_btn.setEnabled(True)
+        self.tone.setEnabled(True)
         self.fix_btn.setText("Fix it ✨")
         same = fixed.strip() == self.input.toPlainText().strip()
         if same and not changes:
@@ -152,6 +167,7 @@ class CorrectorPanel(QWidget):
 
     def on_failed(self, msg):
         self.fix_btn.setEnabled(True)
+        self.tone.setEnabled(True)
         self.fix_btn.setText("Fix it ✨")
         self.status.setText(msg)
 

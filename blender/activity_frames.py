@@ -335,4 +335,5 @@ def main():
     print(f"ACTIVITY_FRAMES_DONE {len(jobs)} frames -> {OUT_DIR}")
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -27,6 +27,48 @@ CONVERSATION = 10.0               # seconds to ask a follow-up after he's answer
 _WAKE = re.compile(r"\b(hey|hi|hay|hei|jay|a|ok|okay)[\s,.!]+(buddy|buddie|budy|bady|body|buddi|bodhi|birdie)\b")
 
 
+def is_return_command(text):
+    """Recognize the explicit local return command, with optional greeting/punctuation."""
+    words = " ".join(re.findall(r"\w+", text.lower()))
+    return bool(re.fullmatch(r"(?:(?:hey|hi|okay|ok) )?(?:buddy )?come back(?: please)?", words))
+
+
+def is_talk_command(text):
+    words = " ".join(re.findall(r"\w+", text.lower().replace("’", "").replace("'", "")))
+    return bool(re.fullmatch(r"(?:(?:hey|hi|okay|ok) )?(?:buddy )?(?:lets|let us) talk(?: please)?", words))
+
+
+def _words(text):
+    return " ".join(re.findall(r"\w+", text.lower().replace("’", "").replace("'", "")))
+
+
+_POLITE = r"(?:(?:hey|hi|ok|okay|buddy|please|can you|could you|would you|will you) )*"
+_MEETING = r"(?:(?:the|this|my|our|a) )?(?:meeting|call|session|screen)"
+_MINUTES = r"(?:the )?(?:minutes|mom|notes)(?: (?:of|for) (?:the |this )?meeting)?"
+_RECORD = re.compile(
+    _POLITE + r"(?:"
+    r"(?:start |begin )?(?:recording|record|to record) " + _MEETING +
+    r"|(?:start|begin) (?:the )?recording(?: " + _MEETING + r")?"
+    r"|(?:take|start|start taking|write|record) " + _MINUTES +
+    r")(?: and (?:write|take|make|do|prepare) " + _MINUTES + r")?(?: (?:please|now|for me))*")
+_STOP = re.compile(
+    _POLITE + r"(?:stop|end|finish) (?:the )?(?:recording|minutes)(?: " + _MEETING + r")?"
+    r"(?: (?:please|now))*")
+
+
+def is_record_command(text):
+    """"record the meeting", "start recording", "take minutes", "record this call and write
+    the minutes", ... Spoken after the wake phrase, so "buddy" isn't needed."""
+    return bool(_RECORD.fullmatch(_words(text)))
+
+
+def is_stop_record_command(text, need_name=False):
+    """"stop recording", "end the minutes". need_name: while recording, only
+    "buddy stop recording" counts, so someone in the meeting saying it doesn't."""
+    words = _words(text)
+    return bool(_STOP.fullmatch(words)) and (not need_name or "buddy" in words.split())
+
+
 def normalize(text):
     """Lower-case, punctuation (other than , . !) to spaces. Same length as text, so
     positions found here are positions in the original."""
@@ -134,8 +176,19 @@ class WakeListener:
         """The next utterance is a command (after "Hey Buddy." or push-to-talk)."""
         self.awaiting_until = now + seconds
 
-    def on_utterance(self, audio, now):
-        """Returns None, ("wake",) or ("command", text)."""
+    def on_utterance(self, audio, now, return_only=False, stop_only=False):
+        """Returns None, ("wake",) or ("command", text).
+        stop_only (while recording minutes): only "buddy stop recording" is heard."""
+        if stop_only and not return_only:
+            self.awaiting_until = 0.0
+            heard = self.quick(audio)
+            return ("command", "stop recording") if is_stop_record_command(heard, need_name=True) else None
+        if return_only:
+            self.awaiting_until = 0.0
+            heard = self.quick(audio)
+            if is_talk_command(heard):
+                return ("command", "let's talk")
+            return ("command", "come back") if is_return_command(heard) else None
         if now < self.awaiting_until:
             text = strip_wake(self.full(audio))
             if not text:                  # a cough or a door: keep waiting for the question
@@ -143,6 +196,10 @@ class WakeListener:
             self.awaiting_until = 0.0
             return ("command", text)
         heard = self.quick(audio)
+        if is_talk_command(heard):
+            return ("command", "let's talk")
+        if is_return_command(heard):
+            return ("command", "come back")
         span = find_wake(heard)
         if span is None:
             return None

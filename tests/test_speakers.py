@@ -97,3 +97,13 @@ def test_screen_pipeline_reads_the_portal_stream():
     args = screen.pipeline(42, "/tmp/x.mkv", 7)
     assert args[:4] == ["gst-launch-1.0", "-e", "pipewiresrc", "fd=7"] and "path=42" in args
     assert "location=/tmp/x.mkv" in args
+
+
+def test_finalize_can_keep_sources_for_transcription(tmp_path):
+    _wav(tmp_path / "mic.wav", 3, 300)
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=5:duration=2",
+                    "-c:v", "libx264", str(tmp_path / "screen.mkv")], check=True)
+    media.finalize(tmp_path, screen_offset=1, keep_raw=True)
+    assert all((tmp_path / name).exists() for name in ("mic.wav", "screen.mkv", "audio.ogg", "recording.mkv"))
+    media.finalize(tmp_path, screen_offset=1)
+    assert not (tmp_path / "mic.wav").exists() and not (tmp_path / "screen.mkv").exists()

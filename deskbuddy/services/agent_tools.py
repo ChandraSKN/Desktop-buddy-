@@ -32,6 +32,17 @@ def _tool(name, description, properties, required=()):
 
 
 TOOLS = [
+    _tool("draft_outlook_meeting",
+          "Prepare an Outlook meeting for review in Buddy. Nothing is created until the user clicks "
+          "Create meeting. Ask for missing title, start/end (or duration), and attendee email addresses; "
+          "never invent email addresses. Use ISO times with explicit UTC offsets. Only enable Teams "
+          "when requested. Afterwards tell the user to review and click Create meeting, never claim it is scheduled.",
+          {"subject": {"type": "string"},
+           "start": {"type": "string", "description": "ISO time with offset, e.g. 2026-10-01T15:00:00+05:30"},
+           "end": {"type": "string", "description": "ISO time with offset"},
+           "attendees": {"type": "string", "description": "Comma-separated email addresses; omit for just the user"},
+           "body": {"type": "string"}, "location": {"type": "string"}, "teams": {"type": "boolean"}},
+          ["subject", "start", "end"]),
     _tool("get_meetings",
           "List the user's meetings from their Outlook calendar that haven't ended, soonest first. "
           "Each has a key (for join_meeting / reminders), title, local start and end time, and "
@@ -57,6 +68,12 @@ TOOLS = [
     _tool("recall", "Search saved facts by keywords.",
           {"query": {"type": "string"}}, ["query"]),
     _tool("forget", "Delete a saved fact by id.", {"id": {"type": "integer"}}, ["id"]),
+    _tool("start_recording",
+          "Start recording the meeting now (screen and call audio) and write the minutes when it "
+          "stops, whether or not it's on the calendar. Use when they ask to record a meeting or "
+          "take minutes. Buddy shows the result itself; just confirm briefly.", {}),
+    _tool("stop_recording",
+          "Stop the meeting recording that is in progress; Buddy then writes the minutes.", {}),
     _tool("search_minutes",
           "Search the minutes of meetings Buddy recorded (summary, action items, decisions). "
           "With no good keyword match it returns the most recent minutes.",
@@ -158,6 +175,8 @@ class ToolBox:
     code: object = None                   # ui.code_task.CodeRunner: .plan(), .propose(), .snapshot()
     projects: object = None               # () -> list[Path], for tests; default scans home
     now: object = field(default=lambda: datetime.now(UTC))
+    outlook: object = None                # UI scheduler; propose only, never create from the agent
+    record: object = None                 # (on: bool) -> None, thread-safe: start / stop minutes
 
     def run(self, name, args):
         try:
@@ -165,6 +184,19 @@ class ToolBox:
             return getattr(self, "_" + name)(**args)
         except ToolInputError as exc:
             return ToolResult(json.dumps({"INVALID_INPUT": str(exc), "input": args}), is_error=True)
+
+    def _draft_outlook_meeting(self, subject, start, end, attendees="", body="", location="", teams=False):
+        from .outlook import make_draft
+        if self.outlook is None:
+            raise ToolInputError("Outlook scheduling is unavailable.")
+        try:
+            draft = make_draft(subject, start, end, attendees, body, location, teams, now=self.now())
+        except ValueError as exc:
+            raise ToolInputError(str(exc)) from exc
+        self.outlook.propose(draft)
+        return ToolResult("Meeting draft submitted for review. NOT scheduled or sent. "
+                          "The user must review the Outlook dialog and click Create meeting. "
+                          "If disconnected, they must connect Outlook scheduling first.")
 
     def _event(self, key):
         return next((e for e in self.get_events() if short_key(e) == key.strip()), None)
@@ -223,6 +255,18 @@ class ToolBox:
     def _forget(self, id):
         ok = self.memory.forget(id)
         return ToolResult("Forgotten." if ok else f"No memory {id}.", is_error=not ok)
+
+    def _start_recording(self):
+        if self.record is None:
+            raise ToolInputError("Recording is unavailable.")
+        self.record(True)
+        return ToolResult("Asked Buddy to start recording; he shows whether it started.")
+
+    def _stop_recording(self):
+        if self.record is None:
+            raise ToolInputError("Recording is unavailable.")
+        self.record(False)
+        return ToolResult("Asked Buddy to stop recording; he writes the minutes next.")
 
     def _search_minutes(self, query):
         found = self.memory.search_minutes(query)

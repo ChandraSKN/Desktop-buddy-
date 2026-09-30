@@ -14,3 +14,7 @@ segno>=1.6
 jeepney>=0.9
 opencv-python-headless>=4.9
 rapidocr-onnxruntime>=1.4
+
+# Direct Outlook scheduling (delegated Microsoft sign-in)
+msal>=1.31,<2
+requests>=2.32,<3

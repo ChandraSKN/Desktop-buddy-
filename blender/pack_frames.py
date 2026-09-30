@@ -38,7 +38,8 @@ for (anim, yi), frames in sorted(groups.items()):
     name = f"{anim}_{yi}.png"
     sheet.save(dst / name, optimize=True)
     manifest["anims"][anim][str(yi)] = {"file": name, "frames": len(ims)}
-    manifest["frame_size"] = [w, h]
+    if anim != "foldchair":
+        manifest["frame_size"] = [w, h]
 
 # the chair layer and where it sits in each pull frame (from sit_frames.py)
 meta = src / "sit_meta.json"

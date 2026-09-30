@@ -74,12 +74,26 @@ class Recorder:
         if event is not None:
             meta.update(event_key=event.key, start=event.start.isoformat(), end=event.end.isoformat())
         (self.folder / "meta.json").write_text(json.dumps(meta, indent=1))
-        for name, args in TRACKS.items():
-            self.procs.append(subprocess.Popen(
-                ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", *args,
-                 str(self.folder / name)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, preexec_fn=ignore_debug_signal))
         self.started_clock = time.time()
+        devices = call_devices(_dump())
+        try:
+            for name, args in TRACKS.items():
+                args = list(args)
+                device = devices.get(name)
+                if device is not None:
+                    props = _props(device)
+                    target = props.get("object.serial") or props.get("node.name")
+                    if target is not None:
+                        args[args.index("--target") + 1] = str(target)
+                self.procs.append(subprocess.Popen(
+                    ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16", *args,
+                     str(self.folder / name)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, preexec_fn=ignore_debug_signal))
+        except OSError:
+            self.stop()
+            raise
+        if devices:
+            self._note_devices([(name, device_name(device)) for name, device in devices.items()])
         if self.screen:
             self._start_screen()
         return self.folder
@@ -183,12 +197,14 @@ class Recorder:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+                proc.wait()
         self.procs = []
         if screen:
             try:
                 screen.wait(timeout=20)              # the video file is finalized on the way out
             except subprocess.TimeoutExpired:
                 screen.kill()
+                screen.wait()
         self._update_meta(self.folder, recorded_to=(now or datetime.now(UTC)).isoformat(),
                           sound_seconds={name: round(loudness(self.folder / name)[1]) for name in TRACKS})
         return self.folder

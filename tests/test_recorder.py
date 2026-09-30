@@ -86,3 +86,47 @@ def test_loudness_counts_seconds_with_sound(tmp_path):
     assert rec.loudness(path) == (4.0, 1.0)
     assert rec.loudness(tmp_path / "missing.wav") == (0.0, 0.0)
     assert os.path.exists(path)
+
+
+def test_start_uses_call_devices_before_capture(monkeypatch, tmp_path):
+    ours(monkeypatch)
+    monkeypatch.setattr(rec, "_dump", graph)
+    commands = []
+    monkeypatch.setattr(rec.subprocess, "Popen", lambda cmd, **kw: commands.append(cmd) or Proc(500))
+    r = rec.Recorder(tmp_path)
+    r.start("Headset test")
+    assert commands[0][commands[0].index("--target") + 1] == "1003"
+    assert commands[1][commands[1].index("--target") + 1] == "1004"
+
+
+def test_partial_start_stops_first_track(monkeypatch, tmp_path):
+    import pytest
+
+    monkeypatch.setattr(rec, "_dump", lambda: [])
+    class Running:
+        def __init__(self):
+            self.stopped = False
+
+        def poll(self):
+            return None
+
+        def send_signal(self, sig):
+            self.stopped = True
+
+        def wait(self, timeout):
+            return 0
+
+    proc = Running()
+    calls = []
+
+    def launch(*args, **kw):
+        calls.append(args)
+        if len(calls) == 2:
+            raise OSError("device unavailable")
+        return proc
+
+    monkeypatch.setattr(rec.subprocess, "Popen", launch)
+    r = rec.Recorder(tmp_path)
+    with pytest.raises(OSError, match="device unavailable"):
+        r.start("Broken")
+    assert proc.stopped and not r.recording

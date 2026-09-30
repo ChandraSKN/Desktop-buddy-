@@ -19,7 +19,7 @@ def _ffmpeg(args):
                    check=True, capture_output=True, timeout=3600)
 
 
-def finalize(folder, screen_offset=0.0):
+def finalize(folder, screen_offset=0.0, *, keep_raw=False):
     """Returns the files kept. Safe to run again after a crash half-way."""
     folder = Path(folder)
     tracks = [folder / t for t in TRACKS if duration(folder / t) > 0]
@@ -38,9 +38,9 @@ def finalize(folder, screen_offset=0.0):
         _ffmpeg(["-itsoffset", f"{max(0.0, screen_offset):.2f}", "-i", str(screen), "-i", str(audio),
                  "-map", "0:v", "-map", "1:a", "-c", "copy", str(tmp)])
         tmp.replace(video)
-    if audio.exists():
+    if audio.exists() and not keep_raw:
         for t in tracks:
             t.unlink(missing_ok=True)
-    if video.exists():
+    if video.exists() and not keep_raw:
         screen.unlink(missing_ok=True)
     return [p for p in (audio, video) if p.exists()]

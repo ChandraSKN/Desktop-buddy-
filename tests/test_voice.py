@@ -9,6 +9,8 @@ from deskbuddy.services.listener import (
     WakeListener,
     find_wake,
     is_goodbye,
+    is_record_command,
+    is_stop_record_command,
     strip_wake,
 )
 from deskbuddy.services.speech import Voice, clean_for_speech, mouth_levels
@@ -139,3 +141,54 @@ def test_endpointer_recovers_when_the_room_is_suddenly_loud():
     run(ep, hiss)                                   # first block or two are the hiss itself
     assert ep.too_loud
     assert run(ep, hiss) == []                      # then it has learned the room
+
+
+@pytest.mark.parametrize("phrase", ["Buddy, come back!", "Hey Buddy come back", "come back please"])
+def test_return_command_is_local_even_without_hey(phrase):
+    listener = WakeListener(lambda _: phrase, lambda _: pytest.fail("must not need full transcription"))
+    assert listener.on_utterance(None, 100) == ("command", "come back")
+    assert listener.on_utterance(None, 100, return_only=True) == ("command", "come back")
+
+
+def test_background_listening_ignores_other_commands_and_pending_followups():
+    listener = WakeListener(lambda _: "Hey Buddy open Firefox", lambda _: pytest.fail("must stay asleep"))
+    listener.expect_command(100)
+    assert listener.on_utterance(None, 101, return_only=True) is None
+    assert listener.awaiting_until == 0
+
+
+@pytest.mark.parametrize("phrase", ["Buddy let's talk", "Buddy, let’s talk!", "Hey Buddy let us talk"])
+def test_talk_command_works_while_visible_or_dismissed(phrase):
+    listener = WakeListener(lambda _: phrase, lambda _: pytest.fail("local command needs no full model"))
+    assert listener.on_utterance(None, 100) == ("command", "let's talk")
+    assert listener.on_utterance(None, 100, return_only=True) == ("command", "let's talk")
+
+
+@pytest.mark.parametrize("phrase", ["record the meeting", "Record the meeting and write minutes of meeting.",
+                                    "start recording", "please record this call", "take minutes",
+                                    "can you record the meeting and write the minutes", "record my screen"])
+def test_record_commands(phrase):
+    assert is_record_command(phrase)
+
+
+@pytest.mark.parametrize("phrase", ["what were the minutes of yesterday's meeting", "did you record the meeting",
+                                    "don't record the meeting", "remind me to record the meeting at 3",
+                                    "stop recording", "open the recording folder"])
+def test_not_record_commands(phrase):
+    assert not is_record_command(phrase)
+
+
+def test_stop_recording_needs_buddy_while_the_meeting_is_being_recorded():
+    assert is_stop_record_command("stop recording")
+    assert is_stop_record_command("Hey Buddy, end the recording please", need_name=True)
+    assert not is_stop_record_command("stop recording", need_name=True)
+    assert not is_stop_record_command("let's stop the discussion here", need_name=True)
+
+
+def test_while_recording_only_buddy_stop_recording_is_heard():
+    said = iter(["Hey Buddy open Firefox", "stop recording", "Buddy, stop recording."])
+    listener = WakeListener(lambda _: next(said), lambda _: pytest.fail("the meeting isn't transcribed"))
+    listener.expect_command(100)
+    assert listener.on_utterance(None, 101, stop_only=True) is None
+    assert listener.on_utterance(None, 102, stop_only=True) is None
+    assert listener.on_utterance(None, 103, stop_only=True) == ("command", "stop recording")

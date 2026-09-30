@@ -14,10 +14,11 @@ from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QImage, QPainter, QRadialGradient
 
 from ..config import ASSETS as _ASSETS_ROOT
+from .expression import blink_frame, idle_expression
 
 ASSETS = _ASSETS_ROOT / "model3d"
 WAVE_FPS = 14
-ACTIVITY_FPS = {"film": 6, "write": 9}     # film: gentle sway + REC blink; write: pen strokes
+ACTIVITY_FPS = {"film": 6, "write": 9, "music": 12}     # film: gentle sway + REC blink; write: pen strokes
 
 
 @lru_cache(maxsize=1)
@@ -54,7 +55,7 @@ def _setup(p, height, walking, breath):
     m = _manifest()
     ground, top = m["ground_y"], m["top_y"]
     scale = (height - 14) / (ground - top)
-    breathe = 1 + math.sin(breath) * 0.006 if not walking else 1.0
+    breathe = 1 + math.sin(breath) * 0.0025 if not walking else 1.0
     p.save()
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -70,11 +71,17 @@ def _shadow(p, x, height, w):
     p.drawEllipse(QRectF(x - w / 2, height - 15, w, 14))
 
 
-def draw_sitting(p, width, height, anim, frame, chair_alpha, breath, cx=None):
+def draw_sitting(p, width, height, anim, frame, chair_alpha, breath, cx=None, motion_t=0.0):
     """A frame of the chair sequence (see chair.py), character bottom-centred at cx."""
     m = _manifest()
     cx = width / 2 if cx is None else cx
-    strip, _ = _strip(anim, m["sit_yaw_index"])
+    shown = anim
+    if anim == "seated":
+        blink = blink_frame(motion_t)
+        variant = {1: "seated_half", 2: "seated_closed"}.get(blink)
+        if variant in m["anims"]:
+            shown = variant
+    strip, _ = _strip(shown, m["sit_yaw_index"])
     fw, fh = m["frame_size"]
     ground = m["ground_y"]
     scale, breathe = _setup(p, height, False, breath)
@@ -91,7 +98,11 @@ def draw_sitting(p, width, height, anim, frame, chair_alpha, breath, cx=None):
     p.translate(cx, height - 6)
     p.scale(scale, scale)
     p.setOpacity(alpha)
-    p.drawImage(QRectF(-cw / 2 + dx, -ground + dy, cw, ch), _image(chair["file"]))
+    if anim == "pull" and chair.get("fold_strip"):
+        p.drawImage(QRectF(-cw / 2, -ground, cw, ch), _image(chair["fold_strip"]),
+                    QRectF(frame * cw, 0, cw, ch))
+    else:
+        p.drawImage(QRectF(-cw / 2 + dx, -ground + dy, cw, ch), _image(chair["file"]))
     p.setOpacity(1.0)
     p.scale(1, breathe if anim == "seated" else 1)
     p.drawImage(QRectF(-fw / 2, -ground, fw, fh), strip, QRectF(frame * fw, 0, fw, fh))
@@ -142,6 +153,10 @@ def draw_model(p, width, height, phase, walking, breath, yaw, wave_t=None, cx=No
         yi = _nearest_yaw(yaw, range(len(m["yaws"])))
         strip, count = _strip("idle", yi)
         frame = 0
+        expression, expression_frame = idle_expression(activity_t)
+        if str(yi) in m["anims"].get(expression, {}):
+            strip, count = _strip(expression, yi)
+            frame = min(expression_frame, count - 1)
 
     ground = m["ground_y"]
     scale, breathe = _setup(p, height, walking, breath)

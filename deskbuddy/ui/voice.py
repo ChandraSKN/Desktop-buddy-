@@ -29,6 +29,9 @@ class ListenerThread(QThread):
 
     def __init__(self):
         super().__init__()
+        self.conversation_seconds = CONVERSATION
+        self.return_only = False
+        self.stop_only = False         # recording minutes: hear only "buddy stop recording"
         self.enabled = True            # the menu toggle
         self.hold = False              # set while Buddy speaks or records minutes
         self._stop = False
@@ -130,10 +133,11 @@ class ListenerThread(QThread):
                 wake.expect_command(now)
             if self._follow_up and not self.hold and self.enabled:
                 self._follow_up = False
-                wake.expect_command(now, CONVERSATION)
+                wake.expect_command(now, self.conversation_seconds)
                 self.awaiting.emit()
             reason = ("off" if not self.enabled else "busy" if self.hold
-                      else "on a call" if in_call and now >= wake.awaiting_until else None)
+                      else "on a call" if in_call and now >= wake.awaiting_until and not self.stop_only
+                      else None)
             state = f"paused: {reason}" if reason else "listening"
             if state != last_status:
                 self.status.emit(state)
@@ -149,7 +153,8 @@ class ListenerThread(QThread):
                       flush=True)
             if utterance is None or not get_speech_timestamps(utterance, vad):
                 continue
-            event = wake.on_utterance(utterance, time.monotonic())
+            event = wake.on_utterance(utterance, time.monotonic(), return_only=self.return_only,
+                                      stop_only=self.stop_only)
             if event == ("wake",):
                 self.wake.emit()
             elif event and event[0] == "command":

@@ -8,6 +8,9 @@ os.environ["BUDDY_MEMORY_DB"] = os.path.join(_tmp, "memory.db")
 os.environ["BUDDY_RECORDINGS_DIR"] = os.path.join(_tmp, "recordings")
 os.environ["BUDDY_MINUTES_DIR"] = os.path.join(_tmp, "minutes")
 os.environ["BUDDY_VOICE"] = "0"
+os.environ["BUDDY_MUSIC"] = "0"            # don't read the real browser's playback state
 os.environ["BUDDY_ENTRANCE"] = "0"          # start at home; test_window tests the walk-in itself
 os.environ["BUDDY_SOCKET"] = os.path.join(_tmp, "buddy.sock")
 os.environ["BUDDY_WHATSAPP_DB"] = os.path.join(_tmp, "whatsapp.db")
+
+os.environ["BUDDY_OUTLOOK_DIR"] = os.path.join(_tmp, "outlook")

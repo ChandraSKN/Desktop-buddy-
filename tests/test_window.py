@@ -216,3 +216,125 @@ def test_greeting_follows_the_time_of_day():
     assert greeting(14).startswith("Good afternoon")
     assert greeting(19).startswith("Good evening")
     assert "late" in greeting(1)
+
+
+def test_blink_reaches_real_window_in_standing_and_seated_poses(buddy, monkeypatch):
+    from deskbuddy.character.expression import BLINKS
+    from deskbuddy.ui import buddy_window
+
+    buddy.timer.stop()
+    buddy.state = "idle"
+    buddy.wave_start = None
+    buddy.entering = None
+    buddy.yaw = -0.22
+    monkeypatch.setattr(buddy.speaker, "mouth", lambda: None)
+    clock = [BLINKS[0] - 0.1]
+    monkeypatch.setattr(buddy_window.time, "monotonic", lambda: clock[0])
+    for seated in (False, True):
+        buddy.chair = chair.ChairScene(0) if seated else None
+        if seated:
+            buddy.chair.phase = "seated"
+            buddy.chair.start = BLINKS[0] - 0.1
+        clock[0] = BLINKS[0] - 0.1
+        buddy.render_frame()
+        opened = buddy._frame.copy()
+        clock[0] = BLINKS[0] + 0.18
+        buddy.render_frame()
+        assert buddy._frame != opened
+
+
+def test_quit_hides_buddy_and_voice_return_restores_him(buddy, monkeypatch):
+    monkeypatch.setattr(buddy.chat, "ask", lambda *a, **kw: pytest.fail("return must work without an agent"))
+    buddy.say("hello")
+    buddy.dismiss()
+    assert not buddy.isVisible() and not buddy.bubble.isVisible()
+    assert buddy.listener.enabled and buddy.listener.return_only
+    buddy.on_wake()
+    buddy.on_heard("open Firefox")
+    buddy.say("a delayed reminder")
+    assert not buddy.isVisible() and not buddy.bubble.isVisible()
+    buddy.on_heard("Buddy come back")
+    assert buddy.isVisible() and not buddy.dismissed
+    assert not buddy.listener.return_only
+    assert buddy.listener.enabled == buddy.listen
+    assert buddy.bubble.text == "I'm back!"
+
+
+def test_youtube_music_gives_way_to_meetings_and_pause(buddy, monkeypatch):
+    monkeypatch.setattr(model3d, "can_do", lambda kind: True)
+    monkeypatch.setattr(buddy.speaker, "mouth", lambda: None)
+    buddy.music.playing = True
+    buddy.on_music_changed(True)
+    assert buddy.activity() == "music"
+    buddy.paused = True
+    assert buddy.activity() is None
+    buddy.paused = False
+    buddy.voice_state = "paused: on a call"
+    assert buddy.activity() is None
+    buddy.voice_state = "listening"
+    monkeypatch.setattr(buddy.minutes.recorder, "procs", [object()])
+    assert buddy.activity() == "film"
+    monkeypatch.setattr(buddy.minutes.recorder, "procs", [])
+    buddy.music.playing = False
+    assert buddy.activity() is None
+
+
+def test_lets_talk_enlarges_centres_and_goodbye_restores_buddy(buddy, monkeypatch):
+    from PyQt6.QtGui import QGuiApplication
+    said = []
+    monkeypatch.setattr(buddy, "voice_reply", lambda text: said.append(text))
+    buddy.dismiss()
+    buddy.on_heard("Buddy let's talk")
+    screen = QGuiApplication.primaryScreen().availableGeometry()
+    assert buddy.talk_mode and buddy.isVisible()
+    assert buddy.height() > config.WIN_H
+    assert abs(buddy.geometry().center().x() - screen.center().x()) <= 1
+    assert buddy.frozen() and said
+    buddy.tick()
+    assert abs(buddy.geometry().center().x() - screen.center().x()) <= 1
+    buddy.on_heard("goodbye")
+    assert not buddy.talk_mode
+    assert buddy.size().width() == config.WIN_W
+    assert buddy.size().height() == config.WIN_H
+
+
+def test_record_the_meeting_by_voice_without_a_calendar_meeting(buddy, monkeypatch):
+    rec, said, stopped, started = buddy.minutes.recorder, [], [], []
+    monkeypatch.setattr(rec, "failed", lambda: None)
+    monkeypatch.setattr(rec, "follow_call", lambda: [])
+    rec.started = datetime.now(UTC)
+    monkeypatch.setattr(rec, "start", lambda title, event=None: started.append((title, event)) or
+                        rec.procs.append(object()))
+    monkeypatch.setattr(buddy.minutes, "stop", lambda reason="": stopped.append(True) or rec.procs.clear())
+    monkeypatch.setattr(buddy, "voice_reply", lambda text: said.append(text))
+    buddy.events = []
+    buddy.on_heard("record the meeting and write minutes of meeting")
+    assert started == [("Meeting", None)]
+    assert "Recording" in said[-1]
+    buddy.on_heard("record the meeting")
+    assert len(started) == 1 and "already" in said[-1]
+    buddy.on_heard("stop recording")
+    assert stopped and "writing the minutes" in said[-1]
+
+
+def test_while_recording_he_listens_only_for_stop(buddy, monkeypatch):
+    rec = buddy.minutes.recorder
+    monkeypatch.setattr(rec, "failed", lambda: None)
+    monkeypatch.setattr(rec, "follow_call", lambda: [])
+    monkeypatch.setattr(rec, "stop", lambda now=None: rec.procs.clear())
+    rec.procs.append(object())
+    rec.started = datetime.now(UTC)
+    buddy.check_reminders()
+    assert buddy.listener.stop_only and not buddy.listener.hold
+    rec.procs.clear()
+
+
+def test_assistant_can_start_and_stop_recording(buddy, qtbot, monkeypatch):
+    calls = []
+    monkeypatch.setattr(buddy, "record_meeting", lambda spoken=True: calls.append(("start", spoken)))
+    monkeypatch.setattr(buddy, "stop_recording", lambda spoken=True: calls.append(("stop", spoken)))
+    box = buddy.make_agent().toolbox
+    box.run("start_recording", {})
+    box.run("stop_recording", {})
+    qtbot.waitUntil(lambda: len(calls) == 2, timeout=2000)
+    assert calls == [("start", False), ("stop", False)]

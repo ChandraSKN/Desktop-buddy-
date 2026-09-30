@@ -36,7 +36,14 @@ from ..services.claude_hooks import describe as describe_claude
 from ..services.code_tasks import summary as code_summary
 from ..services.idle import IdleMonitor
 from ..services.launcher import Launcher
-from ..services.listener import CONVERSATION, is_goodbye
+from ..services.listener import (
+    CONVERSATION,
+    is_goodbye,
+    is_record_command,
+    is_return_command,
+    is_stop_record_command,
+    is_talk_command,
+)
 from ..services.memory import MemoryStore
 from ..services.notifier import Notifier
 from ..services.reminders import (
@@ -55,11 +62,14 @@ from ..services.reminders import (
 )
 from .assistant_panel import AssistantPanel
 from .bubble import Bubble
+from .camera_guard import CameraGuard
 from .code_task import CodeCard, CodeRunner
 from .command_server import CommandServer
 from .corrector_panel import CorrectorPanel
 from .meeting_card import MeetingCard
 from .minutes_bar import MinutesBar
+from .music import MusicMonitor
+from .outlook import OutlookScheduler
 from .timers import after
 from .voice import ListenerThread, Speaker
 from .whatsapp import DraftCard, LinkDialog, WhatsAppLink
@@ -77,6 +87,8 @@ def greeting(hour):
 
 
 class Buddy(QWidget):
+    recording_requested = pyqtSignal(bool)   # from the assistant's thread: start / stop minutes
+
     def __init__(self):
         super().__init__(None, Qt.WindowType.FramelessWindowHint
                          | Qt.WindowType.WindowStaysOnTopHint
@@ -85,6 +97,7 @@ class Buddy(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMouseTracking(True)
+        self.talk_mode = False
         self.resize(WIN_W, WIN_H)
 
         self.settings = QSettings("DesktopBuddy", "DesktopBuddy")
@@ -100,6 +113,7 @@ class Buddy(QWidget):
         self.state = "idle"
         self.state_until = time.monotonic() + 1.5
         self.target_x = self.fx
+        self.dismissed = False
         self.paused = False      # user pause from the menu
         self.hovered = False
         self.last_pointer = 0.0  # when the pointer last entered or moved over him
@@ -124,6 +138,7 @@ class Buddy(QWidget):
 
         self.memory = MemoryStore(MEMORY_DB)
         self.launcher = Launcher()
+        self.outlook = OutlookScheduler(self)
         self.whatsapp = WhatsAppLink(self)
         self.whatsapp.draft_ready.connect(self.on_draft)
         self.whatsapp.sent.connect(self.on_sent)
@@ -142,11 +157,16 @@ class Buddy(QWidget):
         self.fixer = CorrectorPanel(self)
         self.chat = AssistantPanel(self, self.make_agent)
         self.minutes = MinutesBar(self, self.memory)
+        self.recording_requested.connect(
+            lambda on: self.record_meeting(spoken=False) if on else self.stop_recording(spoken=False))
         self.listen = self.settings.value("voice_listen", True, type=bool)
         self.speak = self.settings.value("voice_speak", True, type=bool)
         self.voice_state = "off"
+        self.music = MusicMonitor(self)
+        self.music.changed.connect(self.on_music_changed)
         self.speaker = Speaker(self)
         self.listener = ListenerThread()
+        self.camera_guard = CameraGuard(self)
         self.listener.wake.connect(self.on_wake)
         self.listener.heard.connect(self.on_heard)
         self.listener.awaiting.connect(self.on_awaiting)
@@ -194,6 +214,16 @@ class Buddy(QWidget):
     # ---- placement ------------------------------------------------------------
     def update_geometry(self, initial=False):
         screen = QGuiApplication.primaryScreen().availableGeometry()
+        if self.talk_mode:
+            height = int(screen.height() * 0.78)
+            width = min(int(screen.width() / 3), int(height * WIN_W / WIN_H))
+            self.resize(width, height)
+            self.fx = float(screen.center().x() - width // 2)
+            self.fy = float(screen.bottom() - height + 1)
+            self.floor_y = self.fy
+            self.target_x = self.fx
+            self.move(int(self.fx), int(self.fy))
+            return
         self.floor_y = screen.bottom() - self.height() + 4      # shoes rest on the taskbar/dock
         self.min_x = screen.left() + 8
         self.max_x = max(self.min_x, screen.right() - WIN_W + 20)
@@ -282,8 +312,13 @@ class Buddy(QWidget):
     # ---- reminders ------------------------------------------------------------
     def check_reminders(self):
         self.minutes.tick()
-        # don't listen while speaking (he'd hear himself) or while recording minutes
-        self.listener.hold = self.speaker.speaking or self.minutes.recorder.recording
+        # don't listen while speaking (he'd hear himself); while recording minutes only
+        # "buddy stop recording" is heard, so the meeting itself isn't taken as commands
+        recording = self.minutes.recorder.recording
+        self.listener.hold = self.speaker.speaking or (recording and self.dismissed)
+        self.listener.stop_only = recording and not self.dismissed
+        if self.dismissed:
+            return
         here = not self.idle.tracker.away       # no break reminders for an empty desk
         for reminder in self.schedule.due(datetime.now(UTC), self.events,
                                           self.wellness and here):
@@ -337,7 +372,8 @@ class Buddy(QWidget):
 
     def make_agent(self):
         return Agent(ToolBox(self.memory, lambda: self.events, launcher=self.launcher,
-                             whatsapp=self.whatsapp, code=self.code))
+                             whatsapp=self.whatsapp, code=self.code, outlook=self.outlook,
+                             record=self.recording_requested.emit))
 
     def outlook_url(self):
         return outlook_web_url(self.settings.value("calendar_url", ""))
@@ -420,24 +456,78 @@ class Buddy(QWidget):
             self.say("I can't hear you: " + state[7:], 6000)
 
     def on_wake(self):
+        if self.dismissed:
+            return
         self.stand_up()
         self.reply_pending = False           # "Hey Buddy" already opens its own window
         self.speaker.stop()
         self.say("👂 Yes?", 8000)
 
     def on_heard(self, text, language="en"):
+        if is_talk_command(text):
+            self.start_talking()
+            return
+        if is_return_command(text):
+            self.come_back()
+            return
+        if self.dismissed:
+            return
+        if self.camera_guard.answer(text):
+            return
+        if is_stop_record_command(text):
+            self.stop_recording()
+            return
+        if is_record_command(text):
+            self.record_meeting()
+            return
         self.stand_up()
         if is_goodbye(text) and not (self.draft_card.draft or self.code_card.proposal):
             # "thanks" ends the conversation; "no" to a card is an answer
+            self.end_talking()
             self.say("👍", 2000)
             return
         self.say(f"🎤 “{text}”", 20000)
         if not self.chat.ask(text, spoken=True, language=language):
             self.voice_reply("Hang on, I'm still answering the last one.")
 
+    def start_talking(self):
+        self.dismissed = False
+        self.listener.return_only = False
+        self.listener.enabled = True
+        self.entering = None
+        self.held_bubbles.clear()
+        self.end_chair()
+        self.talk_mode = True
+        self.listener.conversation_seconds = 60.0
+        self.state = "idle"
+        self.yaw = -0.22
+        self.wave_start = None
+        self._drag_offset = None
+        self.update_geometry()
+        self.show()
+        self.raise_()
+        self.render_frame()
+        self.update()
+        self.voice_reply("I'm here. What would you like to talk about?")
+
+    def end_talking(self):
+        if not self.talk_mode:
+            return
+        self.talk_mode = False
+        self.listener.conversation_seconds = CONVERSATION
+        self.listener.enabled = self.listen
+        self.resize(WIN_W, WIN_H)
+        self.update_geometry()
+        self.move(int(self.fx), int(self.fy))
+        self.last_click = time.monotonic()
+        self.render_frame()
+        self.update()
+
     def voice_reply(self, text):
         """Show the reply in a bubble and, unless voice is off, say it. Then listen for a
         follow-up question for a few seconds, without needing "Hey Buddy" again."""
+        if self.dismissed:
+            return
         self.say(text[:220] + ("…" if len(text) > 220 else ""), max(5000, 70 * len(text)))
         if self.speak and self.speaker.say(text):
             self.listener.hold = True
@@ -448,7 +538,7 @@ class Buddy(QWidget):
     def _reply_spoken(self):
         if self.reply_pending:
             self.reply_pending = False
-            self.listener.hold = self.minutes.recorder.recording
+            self.listener.hold = self.minutes.recorder.recording and self.dismissed
             self.listener.follow_up()
 
     def on_awaiting(self):
@@ -689,8 +779,13 @@ class Buddy(QWidget):
         # the pointer is over Wayland windows), so a hover lapses when the pointer goes still.
         hovering = self.hovered and time.monotonic() - self.last_pointer < HOVER_HOLD
         talking = self.speaker.mouth() is not None
-        return (self.paused or hovering or self.busy or talking or self.activity() is not None
+        return (self.talk_mode or self.paused or hovering or self.busy or talking or self.activity() is not None
                 or self._drag_offset is not None)
+
+    def on_music_changed(self, playing):
+        if playing and not self.dismissed:
+            self.stand_up()
+            self.state = "idle"
 
     def activity(self):
         """What he's busy with, shown by holding a prop: "film" while recording a meeting,
@@ -705,6 +800,9 @@ class Buddy(QWidget):
             kind = "film"
         elif minutes.worker is not None:
             kind = "write"
+        elif (self.music.playing and not self.talk_mode and not self.on_call() and not self.speaker.speaking
+              and not self.busy and not self.paused and not self.dismissed):
+            kind = "music"
         else:
             return None
         return kind if model3d.can_do(kind) else None
@@ -713,7 +811,7 @@ class Buddy(QWidget):
         now = time.monotonic()
         if self.docked:
             if self.state == "walk":
-                self.state, self.state_until = "idle", now + random.uniform(5, 10)
+                self.state, self.state_until = "idle", now + random.uniform(10, 18)
                 self.facing = -1                     # turn back to face the screen
             else:
                 # A few small steps beside the right edge, then back home.
@@ -734,10 +832,12 @@ class Buddy(QWidget):
             self.facing = 1 if self.target_x > self.fx else -1
 
     def tick(self):
+        if self.dismissed:
+            return
         now = time.monotonic()
         dt = min(now - self._last, 0.05)
         self._last = now
-        self.breath += dt * 2.2
+        self.breath += dt * 1.5
 
         if self.entering is not None:
             self.walk_in(now, dt)
@@ -800,15 +900,16 @@ class Buddy(QWidget):
         if self.chair is not None:
             anim, frame, alpha = self.chair.frame(time.monotonic())
             model3d.draw_sitting(p, self.width(), self.height(), anim, frame, alpha,
-                                 self.breath, self.pad + WIN_W / 2)
+                                 self.breath, self.pad + WIN_W / 2, motion_t=time.monotonic())
         else:
             wave_t = time.monotonic() - self.wave_start if self.wave_start is not None else None
             if self.entering is not None:
                 # nothing is drawn past the screen's right edge, so he steps out from behind
                 # it (and never shows up on a monitor to the right)
                 p.setClipRect(0, 0, self.screen_right - self.x() + 1, self.height())
+            centre = self.width() / 2 if self.talk_mode else self.pad + WIN_W / 2
             model3d.draw_model(p, self.width(), self.height(), self.phase, walking, self.breath,
-                               self.yaw, wave_t, self.pad + WIN_W / 2 + (self.entering or 0),
+                               self.yaw, wave_t, centre + (self.entering or 0),
                                self.speaker.mouth(),
                                self.activity(), time.monotonic())
         p.end()
@@ -831,6 +932,8 @@ class Buddy(QWidget):
             QPainter(self).drawImage(0, 0, self._frame)
 
     def say(self, text, ms=3000):
+        if self.dismissed:
+            return
         if self.entering is not None:
             self.held_bubbles.append((text, ms))
             return
@@ -893,6 +996,8 @@ class Buddy(QWidget):
         speak.setCheckable(True); speak.setChecked(self.speak)
         voice = menu.addAction("Voice: " + self.voice_state)
         voice.setEnabled(False)
+        menu.addAction("Turn off camera guard" if self.camera_guard.active else "Enable camera guard…",
+                       self.camera_guard.stop if self.camera_guard.active else self.camera_guard.start)
         menu.addSeparator()
         if self.whatsapp.state == "not linked":
             menu.addAction("💬  Link WhatsApp…", self.link_whatsapp)
@@ -932,12 +1037,18 @@ class Buddy(QWidget):
         brief = menu.addAction("Brief me before meetings", self.toggle_brief)
         brief.setCheckable(True); brief.setChecked(self.brief)
         menu.addAction("Preview meeting reminder", self.preview_meeting)
+        menu.addAction("Connect Outlook scheduling…", self.outlook.connect_account)
         menu.addAction("Connect Outlook calendar…", self.configure_outlook)
         menu.addAction("Sync calendar now", self.sync_calendar)
         status = menu.addAction("Outlook: " + self.calendar_status)
         status.setEnabled(False)
         menu.addSeparator()
-        menu.addAction("Quit", self.quit_safely)
+        if self.talk_mode:
+            menu.addAction("End conversation", self.end_talking)
+        else:
+            menu.addAction("Let’s talk", self.start_talking)
+        menu.addAction("Quit (say ‘buddy come back’ to return)", self.dismiss)
+        menu.addAction("Exit completely", self.quit_safely)
         menu.exec(e.globalPos())
 
     def start_minutes_now(self):
@@ -945,12 +1056,71 @@ class Buddy(QWidget):
         live = next((e for e in self.events if e.start - timedelta(minutes=5) <= now <= e.end), None)
         self.minutes.start(live, None if live else "Meeting")
 
+    def record_meeting(self, spoken=True):
+        """Record the screen and the call audio and write the minutes afterwards, whether or
+        not a meeting is on the calendar ("Hey Buddy, record the meeting")."""
+        reply = self.voice_reply if spoken else (lambda text: self.say(text, 6000))
+        if self.minutes.recorder.recording:
+            reply("I'm already recording. Say “Buddy, stop recording” when it's over.")
+            return
+        self.stand_up()
+        self.start_minutes_now()
+        if self.minutes.recorder.recording:
+            reply("Recording the meeting. Say “Buddy, stop recording” when it's over, "
+                  "and I'll write the minutes.")
+        else:
+            reply("I couldn't start recording. " + self.minutes.note.text())
+
+    def stop_recording(self, spoken=True):
+        reply = self.voice_reply if spoken else (lambda text: self.say(text, 6000))
+        if not self.minutes.recorder.recording:
+            reply("I'm not recording anything right now.")
+            return
+        self.stand_up()
+        self.minutes.stop()
+        reply("Stopped recording. I'm writing the minutes now; I'll tell you when they're ready.")
+
+    def dismiss(self):
+        """Leave the screen but keep the local voice listener alive."""
+        self.end_talking()
+        self.dismissed = True
+        self.reply_pending = False
+        self.listener.return_only = True
+        self.listener.enabled = True
+        self.speaker.stop()
+        self.camera_guard.stop()
+        self.listener.hold = self.minutes.recorder.recording
+        self.bubble.hide()
+        for window in self.findChildren(QWidget):
+            if window.isWindow():
+                window.hide()
+        self.hide()
+        if VOICE and not self.listener.isRunning():
+            self.listener.start()
+
+    def come_back(self):
+        self.dismissed = False
+        self.listener.return_only = False
+        self.listener.enabled = self.listen
+        self.hovered = False
+        self._last = time.monotonic()
+        self.stand_up()
+        self.show()
+        self.raise_()
+        self.wave(3)
+        self.say("I'm back!", 3000)
+
     def quit_safely(self):
-        if ((self.calendar_worker and self.calendar_worker.isRunning()) or
+        if (self.outlook.busy or (self.calendar_worker and self.calendar_worker.isRunning()) or
                 any(p.worker and p.worker.isRunning() for p in (self.fixer, self.chat))):
             self.say("Finishing the current request before closing…", 3000)
             after(self, 500, self.quit_safely)
             return
+        self.camera_guard.stop()
+        if self.camera_guard.worker and self.camera_guard.worker.isRunning():
+            after(self, 200, self.quit_safely)
+            return
+        self.music.stop()
         self.minutes.shutdown()         # finishes the audio; minutes resume at the next start
         self.whatsapp.stop()
         self.code.stop()

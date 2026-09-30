@@ -54,3 +54,18 @@ def test_interrupting_the_pull_pushes_back_from_the_same_frame():
     before = scene.frame(1.0)[1]
     scene.stand_up(1.0)
     assert scene.phase == "push" and scene.frame(1.0)[1] == before
+
+
+def test_folding_chair_strip_matches_character_sequence():
+    from PyQt6.QtGui import QImage
+
+    manifest = model3d._manifest()
+    layer = manifest["chair"]
+    strip = QImage(str(model3d.ASSETS / layer["fold_strip"]))
+    width, height = layer["frame_size"]
+    assert not strip.isNull()
+    assert strip.width() == width * model3d.sit_frame_count("pull")
+    assert strip.height() == height
+    assert manifest["frame_size"] == [240, 360]
+    # Opening changes the geometry, not merely the opacity/position of one image.
+    assert strip.copy(7 * width, 0, width, height) != strip.copy(16 * width, 0, width, height)

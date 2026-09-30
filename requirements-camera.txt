@@ -1,0 +1,5 @@
+# Optional local face matching; dlib may require cmake and a C++ compiler.
+# Install after the base project requirements.
+face-recognition>=1.3,<2
+# face-recognition-models 0.3 uses pkg_resources (removed in setuptools 81).
+setuptools>=70,<81

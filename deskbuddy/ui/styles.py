@@ -21,6 +21,12 @@ QPushButton#join:hover { background: #6d86f0; }
 
 
 PANEL_CSS = """
+QComboBox { background: #11141f; color: #eef1fb; border: 1px solid #333c5c;
+            border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+QComboBox:disabled { color: #9aa6c8; }
+QComboBox QAbstractItemView { background: #1d2233; color: #eef1fb;
+                            selection-background-color: #4f6bd8; }
+
 QWidget#card { background: #1d2233; border: 1px solid #3a4466; border-radius: 16px; }
 QLabel { color: #e8ecf8; }
 QLabel#title { font-size: 15px; font-weight: 600; }

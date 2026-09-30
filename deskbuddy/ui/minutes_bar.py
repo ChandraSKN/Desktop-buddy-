@@ -60,6 +60,10 @@ class MinutesWorker(QThread):
         meta["attempts"] = meta.get("attempts", 0) + 1
         meta_path.write_text(json.dumps(meta, indent=1))
         try:
+            # Playable media must survive failed transcription or an unavailable API.
+            # Keep source tracks for transcription, speaker detection, and retries.
+            self.progress.emit("saving the recording")
+            media.finalize(self.folder, meta.get("screen_offset", 0.0), keep_raw=True)
             segments = self._transcript()
             if segments is None:
                 return

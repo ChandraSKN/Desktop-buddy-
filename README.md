@@ -27,12 +27,12 @@ The service is `~/.config/systemd/user/desktop-buddy.service`, made by setup.sh 
 - starts automatically every time you log in, with no terminal needed
 - restarts itself within 5 seconds if it ever crashes, or if the display isn't ready yet
   at login
-- **right-click → Quit** stops it until your next login (or `./run.sh`)
+- **right-click → Quit** hides Buddy and keeps local voice listening active. Say **“buddy come back”** to bring him back. Voice return requires voice support and pauses during calls or minutes recording. **Exit completely** stops the listener too; launch `./run.sh` to start again.
 
 | Task | Command |
 |---|---|
 | Start / restart | `./run.sh` (or `systemctl --user restart desktop-buddy`) |
-| Stop | right-click → Quit, or `systemctl --user stop desktop-buddy` |
+| Stop | right-click → Exit completely, or `systemctl --user stop desktop-buddy` |
 | Check it's running | `systemctl --user status desktop-buddy` |
 | See its log / errors | `journalctl --user -u desktop-buddy -f` |
 | Turn off autostart | `systemctl --user disable --now desktop-buddy` |
@@ -69,11 +69,26 @@ the window underneath.
 - Reminders wait while the correction panel is open and appear one at a time.
 - Docking and wellness preferences persist across restarts.
 
+### Subtle expressions
+
+Buddy blinks at varied intervals while standing or seated and occasionally makes a small
+head glance. Breathing is gentle, seated movements are slower, and docked pauses are
+longer. Expressions use extra Blender sprite strips and the existing animation timer.
+The original face, outfit, and neutral pose are preserved; walking, waving, speaking,
+and meeting actions keep their own animations.
+
+To regenerate the expressions from the existing model:
+
+```bash
+BUDDY_FRAMES=/tmp/buddy_human blender -b blender/buddy_model.blend --python blender/human_frames.py
+.venv/bin/python blender/pack_frames.py /tmp/buddy_human
+```
+
 ### Taking a seat
 
-If you don't click him for **1 minute**, he pulls up a wooden chair from his right, drags
-it behind him and sits down, looking around now and then. Any click, a reminder, or you
-coming back to the computer makes him stand up and push the chair away (a left click still
+If you don't click him for **1 minute**, he brings in a folded wooden chair, unfolds
+its seat and legs, guides it behind him and gently sits down, looking around now and then. Any click, a reminder, or you
+coming back to the computer makes him stand up and fold the chair away (a left click still
 opens the correction panel). To see it sooner: `BUDDY_SIT_AFTER=30 .venv/bin/python buddy.py`.
 
 ### Knowing when you're away
@@ -98,8 +113,10 @@ rf["OUT_DIR"] = "/tmp/buddy_frames"; rf["render"](rf["jobs"]())   # ~2 min
 
 and run `.venv/bin/python blender/pack_frames.py /tmp/buddy_frames` to rebuild
 `assets/model3d/`. The chair and sitting frames come from `blender/sit_frames.py`, which
-builds the chair and renders pull / sit / seated at the idle angle, plus the chair as its own
-layer that the app slides and fades behind him. It runs headless (~1 min):
+builds a hinged folding chair and renders pull / sit / seated at the idle angle. A separate
+chair strip shows the folded chair entering, its seat and legs opening, and its placement
+behind Buddy. He lowers himself slowly with a forward lean; getting up reverses the
+sequence and folds the chair away. It runs headless:
 
 ```bash
 BUDDY_FRAMES=/tmp/buddy_sit blender -b blender/buddy_model.blend --python blender/sit_frames.py
@@ -174,8 +191,9 @@ phrase, and then only the transcribed words go to Claude.
   `pw-play`. The voice doesn't report phoneme timings, so the mouth follows loudness: four
   openings rendered in Blender (`blender/talk_frames.py`, with a strip of upper teeth),
   picked 25 times a second.
-- **Not listening** while he's speaking (he'd hear himself), while recording minutes, or
-  while another app is using the mic (you're on a call). If the mic stream drops (headset
+- **Not listening** while he's speaking (he'd hear himself) or while another app is using
+  the mic (you're on a call). While recording minutes he only listens for
+  **"Buddy, stop recording"**. If the mic stream drops (headset
   off), it reconnects by itself.
 - **Cost:** ~550 MB of memory with the speech models loaded, ~5% of one core while idle.
   Turning listening off frees the CPU.
@@ -303,9 +321,17 @@ portfolio in VS Code"*, *"how's it going?"*. Code lives in `services/code_tasks.
 When you join a meeting through Buddy (the card's or notification's **Join**, the meetings
 menu, or asking the assistant), he asks **"📝 Take minutes for …?"**. He also asks if a
 calendar meeting is on and another app (Teams, your browser…) starts using the microphone,
-i.e. you joined some other way. Or right-click → **Take minutes now**. Recording only
-starts on a click; a red **● Recording** bar shows the whole time. *Tell the other people
-you're recording.*
+i.e. you joined some other way. Or right-click → **Take minutes now**, or just say
+**"Hey Buddy, record the meeting"**. The meeting doesn't have to be on your calendar.
+Recording only starts when you click or ask; a red **● Recording** bar shows the whole
+time. *Tell the other people you're recording.*
+
+By voice, after "Hey Buddy": **"record the meeting"**, **"record this call and write the
+minutes"**, **"start recording"** or **"take minutes"** (or ask in your own words; the
+assistant can start and stop recording too). It records the screen and both audio tracks,
+exactly like **Take minutes now**. While recording, Buddy ignores everything said in the
+meeting except **"Buddy, stop recording"**. The word *Buddy* is required, so someone else
+saying "stop recording" doesn't stop it. Then he writes the minutes.
 
 1. **Record:** PipeWire's `pw-record` captures two tracks: your microphone ("You") and
    what plays through your speakers or headset ("Others"). It stops when you press
@@ -330,6 +356,56 @@ mid-way, he finishes the minutes at the next start.
 **Limits:** "Others" is one mixed track, so individual people are named only when the
 conversation makes it clear who's speaking. Your default mic and speakers when recording
 starts are used; switching devices mid-call isn't followed.
+
+## Schedule Outlook meetings
+
+Ask Buddy by chat or voice: *"Schedule an export review tomorrow from 3 to 3:30 pm
+with ravi@example.com and add a Teams link."* Buddy asks for missing details, then
+opens a review dialog with the calendar account, date/time, attendees, location,
+description, and Teams option. Click **Create meeting** to create the event and send
+invitations. Closing or cancelling the dialog sends nothing. Saying "yes" alone does
+not send a meeting. Attendee email addresses must be provided; Buddy does not look up
+contacts or invent addresses. This creates single events in the signed-in account's
+default calendar; recurring events, rescheduling, and attendee availability lookup
+are not implemented.
+
+This uses Microsoft Graph with delegated `Calendars.ReadWrite` access. The existing
+ICS subscription remains the separate, read-only source for calendar reminders.
+You can use scheduling without an ICS feed; new events may take time to appear in
+subscription-based reminders.
+
+### One-time Microsoft setup
+
+1. In [Microsoft Entra app registrations](https://entra.microsoft.com/), register an
+   app named **Desktop Buddy**. Select the account types matching your account:
+   your organization for a work account, or a registration supporting personal
+   Microsoft accounts if needed.
+2. Under **Authentication → Add a platform → Mobile and desktop applications**, add
+   the redirect URI **http://localhost**. Buddy uses browser sign-in with PKCE;
+   no client secret is needed.
+3. Under **API permissions**, add **Microsoft Graph → Delegated permissions →
+   Calendars.ReadWrite**. Your organization may require administrator consent.
+4. Copy the **Application (client) ID** and **Directory (tenant) ID** from Overview.
+   For a registration supporting multiple organizations/personal accounts, `common`
+   can be used as the tenant instead.
+5. Right-click Buddy → **Connect Outlook scheduling…**, enter those IDs, click
+   **Sign in with Microsoft**, and finish sign-in in your browser. The dialog shows
+   the connected account. Passwords are entered only on Microsoft's sign-in page.
+
+Teams links require a mailbox/account that supports Teams meetings. Connection errors
+and Graph failures appear in the dialog; a failed request never displays success.
+On an uncertain network result, check Outlook before retrying. Retrying the same open
+draft reuses its transaction ID to reduce duplicate events; drafting it again makes a
+new ID.
+
+The MSAL token cache and account configuration are stored under
+`~/.config/desktop-buddy/outlook/` with owner-only permissions. They are not sent to
+the assistant and are not included in Buddy's backup script; sign in again on a new
+computer. **Disconnect scheduling** removes this local connection without changing
+your ICS subscription or deleting meetings already created.
+
+References: [Microsoft event creation](https://learn.microsoft.com/en-us/graph/api/user-post-events?view=graph-rest-1.0)
+and [MSAL browser sign-in](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens).
 
 ## Outlook meeting reminders
 
@@ -516,8 +592,8 @@ flowchart LR
   system prompt and tools stay a stable, cached prefix.
 - **Pre-rendered 3D.** Blender renders the rigged model into sprite strips, so the app gets
   real 3D shading at the cost of a few MB of PNGs and no GPU at runtime. The chair is a
-  separate layer because the character is always in front of it; in an orthographic view
-  moving it is just a 2D offset, so one chair image covers the whole pull animation.
+  separate layer because the character is always in front of it. A matching sprite strip
+  animates its seat and leg hinges; a single open-chair image is used while seated.
 - **XWayland on purpose.** GNOME's Wayland session doesn't let apps place their own
   windows, which a desktop companion must do, so Qt runs on `xcb`. The catch, handled in
   `BuddyWindow.frozen()`: XWayland may never report the pointer leaving the window.
@@ -577,3 +653,58 @@ in the window: typed and spoken "open" without Claude, unknown apps going to Cla
 and `buddy open` over the socket.
 
 Run `.venv/bin/python buddy.py` in a terminal to see startup errors directly.
+
+## Camera guard
+
+Install optional local face matching with `.venv/bin/pip install -r requirements-camera.txt`
+(dlib may need a C++ compiler and CMake). Restart Buddy, enable voice listening, then
+right-click → **Enable camera guard…**. Sit alone facing camera 0: enrollment starts
+in five seconds and takes five face samples. The visible guard window indicates when
+camera monitoring is active. Enrollment is repeated each time you enable the guard.
+
+After three observations of an unfamiliar face with the owner absent, Buddy asks
+**“Who are you?”**. Say **“kamal is great”** without a wake phrase within 20 seconds.
+Case and punctuation are ignored; extra words are not accepted. Without the phrase,
+a visible **30-second shutdown countdown** starts. The phrase still cancels during
+that countdown. **Cancel shutdown / turn off camera guard**, Escape, or closing the
+guard window disables monitoring. The menu can also turn it off.
+
+Seeing the owner again or an empty camera view cancels the pending challenge. An
+accepted guest is allowed until the view has been empty for five seconds. Camera
+errors, stale camera observations, unavailable voice listening, and meetings stop
+the guard without shutdown. Shutdown uses `systemctl --no-ask-password poweroff`;
+permission failures are shown, and Buddy never escalates privileges or forces shutdown.
+Save work before enabling this feature: normal system shutdown can lose unsaved work.
+
+Frames and face templates stay in memory on this computer and are discarded when the
+guard stops. Nothing is uploaded or saved. This is a convenience feature, not a secure
+lock: face matching can make mistakes, photos may fool it, the phrase can be replayed,
+and anyone can use Cancel. Guard mode is off on every application start.
+
+Face matching uses the local [face_recognition API](https://face-recognition.readthedocs.io/en/latest/face_recognition.html).
+
+
+### YouTube music mode
+
+While YouTube or YouTube Music is playing in a browser that exposes Linux MPRIS
+media controls, Buddy puts on headphones and dances. Pausing,
+stopping, or closing playback removes the headphones within a few seconds. Calls,
+meeting recording, speaking, and an open assistant panel take priority.
+
+Detection reads local playback status and, when available, the media URL; it does not
+record audio. The motion is a rhythmic loop, not beat tracking. Browsers do not reliably
+label songs separately from other YouTube videos, so any playing YouTube video can trigger
+it. Chrome and Chromium never expose the page URL, so in those browsers any playing video
+or audio (not only YouTube) starts music mode.
+
+Regenerate the music sprite with `blender/music_frames.py`, then pack its output
+with `blender/pack_frames.py` as for the other activity animations.
+
+### Centered conversation
+
+Say **“Buddy, let's talk”** to bring Buddy to the center, enlarged to roughly the
+middle third of the screen. This also works after hiding him with Quit. He greets
+you and listens for your question; each reply allows up to a minute for your next
+question without repeating the wake phrase. After silence, say “Hey Buddy” to
+continue. Say “goodbye” during a follow-up, or right-click → **End conversation**,
+to restore his normal size and position. Existing voice and Claude setup is used.

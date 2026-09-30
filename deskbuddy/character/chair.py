@@ -9,9 +9,9 @@ from . import model3d
 # phase -> (animation, frames per second, played backwards)
 PHASES = {
     "fade_in": ("pull", None, False),     # the chair appears beside him
-    "pull": ("pull", 14, False),
-    "sit": ("sit", 14, False),
-    "seated": ("seated", 6, False),       # loops until he's disturbed
+    "pull": ("pull", 10, False),
+    "sit": ("sit", 10, False),
+    "seated": ("seated", 3, False),       # loops until he's disturbed
     "stand": ("sit", 18, True),
     "push": ("pull", 18, True),
     "fade_out": ("pull", None, True),     # the chair disappears

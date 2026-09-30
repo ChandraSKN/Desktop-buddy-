@@ -122,9 +122,11 @@ def main(out):
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGUSR1, signal.SIG_IGN)
     say(state="recording", at=time.time())
-    code = gst.wait()
+    # Drain stderr while running: a full pipe otherwise freezes capture.
+    _, stderr = gst.communicate()
+    code = gst.returncode
     if code != 0:
-        err = [line for line in (gst.stderr.read() or "").splitlines() if line.strip()]
+        err = [line for line in (stderr or "").splitlines() if line.strip()]
         say(error="screen recorder stopped: " + (err[-1] if err else f"exit {code}"))
     return code
 
